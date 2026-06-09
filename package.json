@@ -25,8 +25,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.js --banner:js='#!/usr/bin/env node'",
+    "dev": "npm run build -- --watch",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build"
   },
@@ -35,7 +35,8 @@
     "zod": "3.25.28"
   },
   "devDependencies": {
-    "typescript": "5.8.3",
-    "@types/node": "22.15.21"
+    "@types/node": "22.15.21",
+    "esbuild": "^0.25.5",
+    "typescript": "5.8.3"
   }
 }
