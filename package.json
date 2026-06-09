@@ -1,0 +1,41 @@
+{
+  "name": "freshservice-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Freshservice – manage tickets, agents and conversations from any MCP-compatible AI client",
+  "keywords": [
+    "mcp",
+    "freshservice",
+    "freshworks",
+    "itsm",
+    "helpdesk",
+    "tickets",
+    "model-context-protocol"
+  ],
+  "author": "Patrick Gebhardt",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "freshservice-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "3.25.28"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "@types/node": "22.15.21"
+  }
+}
