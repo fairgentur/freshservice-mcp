@@ -2,7 +2,7 @@
   "mcpServers": {
     "freshservice": {
       "command": "node",
-      "args": ["${powerDir}/dist/index.js"],
+      "args": ["~/.kiro/powers/installed/kiro-freshservice/dist/index.js"],
       "env": {
         "FRESHSERVICE_DOMAIN": "yourcompany.freshservice.com",
         "FRESHSERVICE_API_KEY": "your-api-key-here"
