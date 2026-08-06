@@ -1,5 +1,7 @@
 # freshservice-mcp
 
+[![npm version](https://img.shields.io/npm/v/freshservice-mcp)](https://www.npmjs.com/package/freshservice-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/freshservice-mcp)](https://www.npmjs.com/package/freshservice-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
