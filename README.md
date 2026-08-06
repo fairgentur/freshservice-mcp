@@ -187,8 +187,8 @@ Useful optional fields:
 ## Local Development
 
 ```bash
-git clone https://github.com/fairgentur/kiro-freshservice.git
-cd kiro-freshservice
+git clone https://github.com/fairgentur/freshservice-mcp.git
+cd freshservice-mcp
 npm install
 npm run build
 ```
@@ -200,7 +200,7 @@ Then point your MCP client at the local build:
   "mcpServers": {
     "freshservice": {
       "command": "node",
-      "args": ["/absolute/path/to/kiro-freshservice/dist/index.js"],
+      "args": ["/absolute/path/to/freshservice-mcp/dist/index.js"],
       "env": {
         "FRESHSERVICE_DOMAIN": "yourcompany.freshservice.com",
         "FRESHSERVICE_API_KEY": "your-api-key-here"
