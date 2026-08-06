@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Freshservice MCP Server
  *
