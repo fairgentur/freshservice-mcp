@@ -20,6 +20,16 @@ import {
   PRIORITY_MAP,
 } from "../freshservice-client.js";
 
+/**
+ * Shared wording for every rich-text field. Freshservice stores the value verbatim,
+ * so HTML-escaped markup renders as visible tag text instead of formatting.
+ */
+const HTML_FIELD_HINT =
+  "HTML is supported — pass RAW tags (<p>, <b>, <ul>, <li>, <code>). " +
+  "Do NOT HTML-escape the markup: the value is stored verbatim, so &lt;p&gt; " +
+  "renders as the literal text \"<p>\" instead of a paragraph. Use entities only " +
+  "for characters that must appear literally in the content.";
+
 function statusLabel(status: number, statusMap: Record<number, string>): string {
   return statusMap[status] ?? String(status);
 }
@@ -197,7 +207,7 @@ export function registerTicketTools(
         description: z
           .string()
           .optional()
-          .describe("Ticket description (HTML or plain text)"),
+          .describe(`Ticket description. ${HTML_FIELD_HINT}`),
         email: z
           .string()
           .email()
@@ -232,13 +242,25 @@ export function registerTicketTools(
           .describe("Agent ID to assign to"),
         tags: z.array(z.string()).optional().describe("List of tags"),
         type: z.string().optional().describe("Ticket type, e.g. Incident, Service Request"),
+        category: z
+          .string()
+          .optional()
+          .describe(
+            "Ticket category. Required on Freshservice instances where the category field is " +
+              "mandatory (create_ticket fails with a 400 validation error listing the allowed " +
+              "values if omitted on such instances)."
+          ),
+        sub_category: z
+          .string()
+          .optional()
+          .describe("Ticket sub-category. Only meaningful together with `category`."),
         cc_emails: z
           .array(z.string().email())
           .optional()
           .describe("CC email addresses"),
       }),
     },
-    async ({ subject, description, email, requester_id, priority, status, group_id, responder_id, tags, type, cc_emails }) => {
+    async ({ subject, description, email, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails }) => {
       const ticket = await createTicket(config, {
         subject,
         description,
@@ -250,6 +272,8 @@ export function registerTicketTools(
         responder_id,
         tags,
         type,
+        category,
+        sub_category,
         cc_emails,
       });
       const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
@@ -276,7 +300,10 @@ export function registerTicketTools(
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
         subject: z.string().optional().describe("New subject"),
-        description: z.string().optional().describe("New description"),
+        description: z
+          .string()
+          .optional()
+          .describe(`New description. ${HTML_FIELD_HINT}`),
         priority: z
           .enum(["1", "2", "3", "4"])
           .optional()
@@ -327,7 +354,10 @@ export function registerTicketTools(
         "Add a private note or public reply to a Freshservice ticket.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
-        body: z.string().min(1).describe("Note or reply body (HTML allowed)"),
+        body: z
+          .string()
+          .min(1)
+          .describe(`Note or reply body. ${HTML_FIELD_HINT}`),
         private: z
           .boolean()
           .optional()

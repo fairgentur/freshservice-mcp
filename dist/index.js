@@ -11038,7 +11038,7 @@ async function fsRequest(config2, method, path, params = {}, body) {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
-      `Freshservice API ${method} ${path} \u2192 ${res.status}: ${text.slice(0, 300)}`
+      `Freshservice API ${method} ${path} \u2192 ${res.status}: ${text.slice(0, 2e3)}`
     );
   }
   if (res.status === 204) return void 0;
@@ -21266,6 +21266,7 @@ var StdioServerTransport = class {
 // src/tools/tickets.ts
 init_esm();
 init_freshservice_client();
+var HTML_FIELD_HINT = 'HTML is supported \u2014 pass RAW tags (<p>, <b>, <ul>, <li>, <code>). Do NOT HTML-escape the markup: the value is stored verbatim, so &lt;p&gt; renders as the literal text "<p>" instead of a paragraph. Use entities only for characters that must appear literally in the content.';
 function statusLabel(status, statusMap) {
   return statusMap[status] ?? String(status);
 }
@@ -21387,7 +21388,7 @@ function registerTicketTools(server, config2) {
       description: "Create a new Freshservice ticket. Either `email` or `requester_id` must be provided.",
       inputSchema: external_exports.object({
         subject: external_exports.string().min(1).describe("Ticket subject / title"),
-        description: external_exports.string().optional().describe("Ticket description (HTML or plain text)"),
+        description: external_exports.string().optional().describe(`Ticket description. ${HTML_FIELD_HINT}`),
         email: external_exports.string().email().optional().describe("Requester email address"),
         requester_id: external_exports.number().int().positive().optional().describe("Requester agent/user ID"),
         priority: external_exports.enum(["1", "2", "3", "4"]).optional().describe("Priority: 1=Low, 2=Medium, 3=High, 4=Urgent (default: 2)"),
@@ -21396,10 +21397,14 @@ function registerTicketTools(server, config2) {
         responder_id: external_exports.number().int().positive().optional().describe("Agent ID to assign to"),
         tags: external_exports.array(external_exports.string()).optional().describe("List of tags"),
         type: external_exports.string().optional().describe("Ticket type, e.g. Incident, Service Request"),
+        category: external_exports.string().optional().describe(
+          "Ticket category. Required on Freshservice instances where the category field is mandatory (create_ticket fails with a 400 validation error listing the allowed values if omitted on such instances)."
+        ),
+        sub_category: external_exports.string().optional().describe("Ticket sub-category. Only meaningful together with `category`."),
         cc_emails: external_exports.array(external_exports.string().email()).optional().describe("CC email addresses")
       })
     },
-    async ({ subject, description, email: email2, requester_id, priority, status, group_id, responder_id, tags, type, cc_emails }) => {
+    async ({ subject, description, email: email2, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails }) => {
       const ticket = await createTicket(config2, {
         subject,
         description,
@@ -21411,6 +21416,8 @@ function registerTicketTools(server, config2) {
         responder_id,
         tags,
         type,
+        category,
+        sub_category,
         cc_emails
       });
       const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
@@ -21434,7 +21441,7 @@ ${JSON.stringify(result, null, 2)}`
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive().describe("Freshservice ticket ID"),
         subject: external_exports.string().optional().describe("New subject"),
-        description: external_exports.string().optional().describe("New description"),
+        description: external_exports.string().optional().describe(`New description. ${HTML_FIELD_HINT}`),
         priority: external_exports.enum(["1", "2", "3", "4"]).optional().describe("Priority: 1=Low, 2=Medium, 3=High, 4=Urgent"),
         status: external_exports.number().int().optional().describe("New status code (e.g. 2=Open, 3=Pending, 4=Resolved, 5=Closed)"),
         group_id: external_exports.number().int().positive().optional().describe("Agent group ID"),
@@ -21474,7 +21481,7 @@ ${JSON.stringify(result, null, 2)}`
       description: "Add a private note or public reply to a Freshservice ticket.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive().describe("Freshservice ticket ID"),
-        body: external_exports.string().min(1).describe("Note or reply body (HTML allowed)"),
+        body: external_exports.string().min(1).describe(`Note or reply body. ${HTML_FIELD_HINT}`),
         private: external_exports.boolean().optional().describe("true = private note (default), false = public reply visible to requester"),
         notify_emails: external_exports.array(external_exports.string().email()).optional().describe("Additional email addresses to notify")
       })
