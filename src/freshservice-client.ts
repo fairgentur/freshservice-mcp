@@ -86,8 +86,10 @@ async function fsRequest<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    // Keep enough of the body to carry Freshservice's field-level validation
+    // details, e.g. the allowed values listed on a 400 for `category`.
     throw new Error(
-      `Freshservice API ${method} ${path} → ${res.status}: ${text.slice(0, 300)}`
+      `Freshservice API ${method} ${path} → ${res.status}: ${text.slice(0, 2000)}`
     );
   }
 
@@ -173,6 +175,8 @@ export interface CreateTicketPayload {
   tags?: string[];
   cc_emails?: string[];
   type?: string;
+  category?: string;
+  sub_category?: string;
   [key: string]: unknown;
 }
 
