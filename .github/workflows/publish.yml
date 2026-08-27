@@ -17,8 +17,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Trusted publishing needs npm >= 11.5.1; Node 22 still ships npm 10.x.
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org/'
+          package-manager-cache: false
 
       - run: npm ci
 
@@ -27,6 +29,6 @@ jobs:
       - name: Verify dist exists
         run: test -f dist/index.js
 
-      - run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Auth comes from the OIDC id-token above, not from a stored secret.
+      # Provenance is generated automatically for trusted publishes.
+      - run: npm publish --access public
