@@ -1,7 +1,7 @@
 /**
  * Freshservice MCP Server
  *
- * Exposes Freshservice ticket and agent management as MCP tools.
+ * Exposes Freshservice ticket, change and agent management as MCP tools.
  * Transport: stdio (suitable for use as a spawned subprocess).
  *
  * Required environment variables:
@@ -16,6 +16,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { type FreshserviceConfig } from "./freshservice-client.js";
 import { registerTicketTools } from "./tools/tickets.js";
+import { registerChangeTools } from "./tools/changes.js";
 import { registerAgentTools } from "./tools/agents.js";
 
 // ---------------------------------------------------------------------------
@@ -49,20 +50,23 @@ async function main() {
 
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   // Always register read tools
   registerAgentTools(server, config);
 
-  // Register all ticket tools; if readonly, only read tools are registered
+  // Register ticket and Change tools; if readonly, only read tools are registered
   if (readonly) {
-    // Import and register only read-only ticket tools subset
+    // Import and register only read-only tool subsets
     const { registerReadOnlyTicketTools } = await import("./tools/tickets-readonly.js");
+    const { registerReadOnlyChangeTools } = await import("./tools/changes-readonly.js");
     registerReadOnlyTicketTools(server, config);
+    registerReadOnlyChangeTools(server, config);
     console.error("Freshservice MCP Server running in read-only mode (stdio)");
   } else {
     registerTicketTools(server, config);
+    registerChangeTools(server, config);
     console.error("Freshservice MCP Server running on stdio");
   }
 

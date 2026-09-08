@@ -24,7 +24,7 @@ import {
  * Shared wording for every rich-text field. Freshservice stores the value verbatim,
  * so HTML-escaped markup renders as visible tag text instead of formatting.
  */
-const HTML_FIELD_HINT =
+export const HTML_FIELD_HINT =
   "HTML is supported — pass RAW tags (<p>, <b>, <ul>, <li>, <code>). " +
   "Do NOT HTML-escape the markup: the value is stored verbatim, so &lt;p&gt; " +
   "renders as the literal text \"<p>\" instead of a paragraph. Use entities only " +
