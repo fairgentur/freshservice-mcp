@@ -537,8 +537,9 @@ async function associateOneTicket(
   } catch (error) {
     if (!isBlankDescriptionError(error)) throw error;
     // Retry with a placeholder description only if the ticket really has none,
-    // so we never overwrite existing content.
-    const existing = await getTicket(config, ticketId, "");
+    // so we never overwrite existing content. Read with the default include —
+    // an empty include string is rejected by Freshservice with a 400.
+    const existing = await getTicket(config, ticketId);
     const currentDescription =
       existing.description_text?.trim() || stripHtml(existing.description ?? "");
     if (currentDescription) throw error;
