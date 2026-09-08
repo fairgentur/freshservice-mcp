@@ -4581,9 +4581,9 @@ var require_codegen = __commonJS({
       }
     };
     var Label = class extends Node {
-      constructor(label) {
+      constructor(label3) {
         super();
-        this.label = label;
+        this.label = label3;
         this.names = {};
       }
       render({ _n }) {
@@ -4591,14 +4591,14 @@ var require_codegen = __commonJS({
       }
     };
     var Break = class extends Node {
-      constructor(label) {
+      constructor(label3) {
         super();
-        this.label = label;
+        this.label = label3;
         this.names = {};
       }
       render({ _n }) {
-        const label = this.label ? ` ${this.label}` : "";
-        return `break${label};` + _n;
+        const label3 = this.label ? ` ${this.label}` : "";
+        return `break${label3};` + _n;
       }
     };
     var Throw = class extends Node {
@@ -5010,12 +5010,12 @@ var require_codegen = __commonJS({
         return this._endBlockNode(For);
       }
       // `label` statement
-      label(label) {
-        return this._leafNode(new Label(label));
+      label(label3) {
+        return this._leafNode(new Label(label3));
       }
       // `break` statement
-      break(label) {
-        return this._leafNode(new Break(label));
+      break(label3) {
+        return this._leafNode(new Break(label3));
       }
       // `return` statement
       return(value) {
@@ -11127,6 +11127,73 @@ async function replyToTicket(config2, ticketId, payload) {
   );
   return data.conversation;
 }
+function withChangePlan(payload) {
+  const { change_plan, ...rest } = payload;
+  return change_plan === void 0 ? rest : { ...rest, planning_fields: { change_plan } };
+}
+async function listChanges(config2, options = {}) {
+  const limit = options.limit ?? 100;
+  const changes = [];
+  const params = { per_page: "100" };
+  if (options.query) params.query = `"${options.query}"`;
+  if (options.view) params.view = options.view;
+  if (options.updated_since) params.updated_since = options.updated_since;
+  if (options.workspace_id !== void 0) params.workspace_id = String(options.workspace_id);
+  if (options.order_by) params.order_by = options.order_by;
+  if (options.order_type) params.order_type = options.order_type;
+  let page = options.page ?? 1;
+  while (changes.length < limit) {
+    params.page = String(page);
+    const data = await fsGet(config2, "changes", params);
+    const batch = data.changes ?? [];
+    if (batch.length === 0) break;
+    for (const change of batch) {
+      changes.push(change);
+      if (changes.length >= limit) break;
+    }
+    if (batch.length < 100) break;
+    page++;
+  }
+  return changes;
+}
+async function getChange(config2, changeId, include) {
+  const params = include ? { include } : {};
+  const data = await fsGet(config2, `changes/${changeId}`, params);
+  return data.change;
+}
+async function createChange(config2, payload) {
+  const data = await fsPost(
+    config2,
+    "changes",
+    withChangePlan(payload)
+  );
+  return data.change;
+}
+async function updateChange(config2, changeId, payload) {
+  const data = await fsPut(
+    config2,
+    `changes/${changeId}`,
+    withChangePlan(payload)
+  );
+  return data.change;
+}
+async function associateTicketsToChange(config2, changeDisplayId, ticketIds, associationType = "change_initiated_by_ticket") {
+  return Promise.all(
+    ticketIds.map(
+      (ticketId) => updateTicket(config2, ticketId, {
+        [associationType]: { display_id: changeDisplayId }
+      })
+    )
+  );
+}
+async function addChangeNote(config2, changeId, payload) {
+  const data = await fsPost(
+    config2,
+    `changes/${changeId}/notes`,
+    payload
+  );
+  return data.note;
+}
 async function getMe(config2) {
   const data = await fsGet(config2, "agents/me");
   return data.agent;
@@ -11139,7 +11206,7 @@ async function listAgents(config2, options = {}) {
   const data = await fsGet(config2, "agents", params);
   return data.agents ?? [];
 }
-var DEFAULT_STATUS_MAP, PRIORITY_MAP;
+var DEFAULT_STATUS_MAP, PRIORITY_MAP, CHANGE_PRIORITY_MAP, CHANGE_STATUS_MAP, CHANGE_TYPE_MAP, CHANGE_IMPACT_MAP, CHANGE_RISK_MAP;
 var init_freshservice_client = __esm({
   "src/freshservice-client.ts"() {
     "use strict";
@@ -11154,6 +11221,32 @@ var init_freshservice_client = __esm({
       2: "Medium",
       3: "High",
       4: "Urgent"
+    };
+    CHANGE_PRIORITY_MAP = PRIORITY_MAP;
+    CHANGE_STATUS_MAP = {
+      1: "Open",
+      2: "Planning",
+      3: "Awaiting Approval",
+      4: "Pending Release",
+      5: "Pending Review",
+      6: "Closed"
+    };
+    CHANGE_TYPE_MAP = {
+      1: "Minor",
+      2: "Standard",
+      3: "Major",
+      4: "Emergency"
+    };
+    CHANGE_IMPACT_MAP = {
+      1: "Low",
+      2: "Medium",
+      3: "High"
+    };
+    CHANGE_RISK_MAP = {
+      1: "Low",
+      2: "Medium",
+      3: "High",
+      4: "Very High"
     };
   }
 });
@@ -11273,6 +11366,94 @@ function registerReadOnlyTicketTools(server, config2) {
 }
 var init_tickets_readonly = __esm({
   "src/tools/tickets-readonly.ts"() {
+    "use strict";
+    init_esm();
+    init_freshservice_client();
+  }
+});
+
+// src/tools/changes-readonly.ts
+var changes_readonly_exports = {};
+__export(changes_readonly_exports, {
+  registerReadOnlyChangeTools: () => registerReadOnlyChangeTools
+});
+function label2(value, values) {
+  return values[value] ?? String(value);
+}
+function normalizeChange2(change) {
+  return {
+    id: change.id,
+    subject: change.subject,
+    status: label2(change.status, CHANGE_STATUS_MAP),
+    priority: label2(change.priority, CHANGE_PRIORITY_MAP),
+    impact: label2(change.impact, CHANGE_IMPACT_MAP),
+    risk: label2(change.risk, CHANGE_RISK_MAP),
+    change_type: label2(change.change_type, CHANGE_TYPE_MAP),
+    requester_id: change.requester_id,
+    agent_id: change.agent_id ?? null,
+    group_id: change.group_id ?? null,
+    planned_start_date: change.planned_start_date ?? null,
+    planned_end_date: change.planned_end_date ?? null,
+    created_at: change.created_at,
+    updated_at: change.updated_at,
+    url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/changes/${change.id}`
+  };
+}
+function registerReadOnlyChangeTools(server, config2) {
+  server.registerTool(
+    "list_changes",
+    {
+      title: "List Changes",
+      description: "List Freshservice Changes with filtering, sorting and pagination.",
+      inputSchema: external_exports.object({
+        query: external_exports.string().max(512).optional(),
+        view: external_exports.string().optional(),
+        updated_since: external_exports.string().optional(),
+        workspace_id: external_exports.number().int().nonnegative().optional(),
+        order_by: external_exports.string().optional(),
+        order_type: external_exports.enum(["asc", "desc"]).optional(),
+        limit: external_exports.number().int().min(1).max(500).optional()
+      }).refine(({ query, view }) => !(query && view), {
+        message: "query and view cannot be used together"
+      })
+    },
+    async (args) => {
+      const changes = await listChanges(config2, args);
+      if (changes.length === 0) {
+        return { content: [{ type: "text", text: "No changes found." }] };
+      }
+      const normalized = changes.map(normalizeChange2);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ count: normalized.length, changes: normalized }, null, 2)
+        }]
+      };
+    }
+  );
+  server.registerTool(
+    "get_change",
+    {
+      title: "Get Change",
+      description: "Retrieve full details of a Freshservice Change by ID.",
+      inputSchema: external_exports.object({
+        change_id: external_exports.number().int().positive(),
+        include: external_exports.string().optional()
+      })
+    },
+    async ({ change_id, include }) => {
+      const change = await getChange(config2, change_id, include);
+      const result = {
+        ...normalizeChange2(change),
+        description: change.description_text?.trim() ?? stripHtml(change.description ?? ""),
+        change_plan: change.planning_fields?.change_plan ? stripHtml(change.planning_fields.change_plan) : null
+      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+}
+var init_changes_readonly = __esm({
+  "src/tools/changes-readonly.ts"() {
     "use strict";
     init_esm();
     init_freshservice_client();
@@ -21512,6 +21693,225 @@ ${JSON.stringify(result, null, 2)}`
   );
 }
 
+// src/tools/changes.ts
+init_esm();
+init_freshservice_client();
+function label(value, values) {
+  return values[value] ?? String(value);
+}
+function normalizeChange(change) {
+  return {
+    id: change.id,
+    subject: change.subject,
+    status: label(change.status, CHANGE_STATUS_MAP),
+    priority: label(change.priority, CHANGE_PRIORITY_MAP),
+    impact: label(change.impact, CHANGE_IMPACT_MAP),
+    risk: label(change.risk, CHANGE_RISK_MAP),
+    change_type: label(change.change_type, CHANGE_TYPE_MAP),
+    requester_id: change.requester_id,
+    agent_id: change.agent_id ?? null,
+    group_id: change.group_id ?? null,
+    planned_start_date: change.planned_start_date ?? null,
+    planned_end_date: change.planned_end_date ?? null,
+    created_at: change.created_at,
+    updated_at: change.updated_at,
+    url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/changes/${change.id}`
+  };
+}
+var listChangesSchema = external_exports.object({
+  query: external_exports.string().max(512).optional().describe('Freshservice query, e.g. "priority:4 OR priority:3"'),
+  view: external_exports.string().optional().describe("Default view name or custom Change view ID; cannot be combined with query"),
+  updated_since: external_exports.string().optional().describe("Return Changes updated since this UTC date or timestamp"),
+  workspace_id: external_exports.number().int().nonnegative().optional().describe("Workspace ID; 0 requests Changes across all accessible workspaces"),
+  order_by: external_exports.string().optional().describe("Field to sort by, e.g. priority or updated_at"),
+  order_type: external_exports.enum(["asc", "desc"]).optional().describe("Sort direction (default: desc)"),
+  limit: external_exports.number().int().min(1).max(500).optional().describe("Maximum results (default: 100)")
+}).refine(({ query, view }) => !(query && view), {
+  message: "query and view cannot be used together"
+});
+var changeFields = {
+  subject: external_exports.string().min(1).optional().describe("Change subject"),
+  description: external_exports.string().min(1).optional().describe(`Change description. ${HTML_FIELD_HINT}`),
+  requester_id: external_exports.number().int().positive().optional().describe("Initiating requester ID"),
+  priority: external_exports.enum(["1", "2", "3", "4"]).optional().describe("1=Low, 2=Medium, 3=High, 4=Urgent"),
+  status: external_exports.enum(["1", "2", "3", "4", "5", "6"]).optional().describe(
+    "1=Open, 2=Planning, 3=Awaiting Approval, 4=Pending Release, 5=Pending Review, 6=Closed"
+  ),
+  impact: external_exports.enum(["1", "2", "3"]).optional().describe("1=Low, 2=Medium, 3=High"),
+  risk: external_exports.enum(["1", "2", "3", "4"]).optional().describe("1=Low, 2=Medium, 3=High, 4=Very High"),
+  change_type: external_exports.enum(["1", "2", "3", "4"]).optional().describe(
+    "1=Minor, 2=Standard, 3=Major, 4=Emergency"
+  ),
+  planned_start_date: external_exports.string().optional().describe("Planned start as an ISO 8601 UTC timestamp"),
+  planned_end_date: external_exports.string().optional().describe("Planned end as an ISO 8601 UTC timestamp"),
+  change_plan: external_exports.string().optional().describe(`Rollout plan. ${HTML_FIELD_HINT}`),
+  group_id: external_exports.number().int().positive().optional().describe("Assigned agent group ID"),
+  agent_id: external_exports.number().int().positive().optional().describe("Assigned agent ID")
+};
+function payloadFromArgs(args) {
+  const payload = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (value === void 0 || key === "change_id") continue;
+    payload[key] = ["priority", "status", "impact", "risk", "change_type"].includes(key) ? Number(value) : value;
+  }
+  return payload;
+}
+function registerChangeTools(server, config2) {
+  server.registerTool(
+    "list_changes",
+    {
+      title: "List Changes",
+      description: "List Freshservice Changes with filtering, sorting and pagination.",
+      inputSchema: listChangesSchema
+    },
+    async (args) => {
+      const changes = await listChanges(config2, args);
+      if (changes.length === 0) {
+        return { content: [{ type: "text", text: "No changes found." }] };
+      }
+      const normalized = changes.map(normalizeChange);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ count: normalized.length, changes: normalized }, null, 2)
+        }]
+      };
+    }
+  );
+  server.registerTool(
+    "get_change",
+    {
+      title: "Get Change",
+      description: "Retrieve full details of a Freshservice Change by ID.",
+      inputSchema: external_exports.object({
+        change_id: external_exports.number().int().positive().describe("Freshservice Change ID"),
+        include: external_exports.string().optional().describe("Extra details to embed, e.g. stats")
+      })
+    },
+    async ({ change_id, include }) => {
+      const change = await getChange(config2, change_id, include);
+      const result = {
+        ...normalizeChange(change),
+        description: change.description_text?.trim() ?? stripHtml(change.description ?? ""),
+        change_plan: change.planning_fields?.change_plan ? stripHtml(change.planning_fields.change_plan) : null
+      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+  server.registerTool(
+    "create_change",
+    {
+      title: "Create Change",
+      description: "Create a Freshservice Change with all standard mandatory fields.",
+      inputSchema: external_exports.object({
+        subject: changeFields.subject.unwrap(),
+        description: changeFields.description.unwrap(),
+        requester_id: changeFields.requester_id.unwrap(),
+        priority: changeFields.priority.unwrap(),
+        status: changeFields.status.unwrap(),
+        impact: changeFields.impact.unwrap(),
+        risk: changeFields.risk.unwrap(),
+        change_type: changeFields.change_type.unwrap(),
+        planned_start_date: changeFields.planned_start_date.unwrap(),
+        planned_end_date: changeFields.planned_end_date.unwrap(),
+        change_plan: changeFields.change_plan,
+        group_id: changeFields.group_id,
+        agent_id: changeFields.agent_id
+      })
+    },
+    async (args) => {
+      const change = await createChange(config2, payloadFromArgs(args));
+      return {
+        content: [{
+          type: "text",
+          text: `Change #${change.id} created.
+
+${JSON.stringify(normalizeChange(change), null, 2)}`
+        }]
+      };
+    }
+  );
+  server.registerTool(
+    "update_change",
+    {
+      title: "Update Change",
+      description: "Update provided fields of an existing Freshservice Change.",
+      inputSchema: external_exports.object({
+        change_id: external_exports.number().int().positive().describe("Freshservice Change ID"),
+        ...changeFields
+      })
+    },
+    async (args) => {
+      const change = await updateChange(config2, args.change_id, payloadFromArgs(args));
+      return {
+        content: [{
+          type: "text",
+          text: `Change #${args.change_id} updated.
+
+${JSON.stringify(normalizeChange(change), null, 2)}`
+        }]
+      };
+    }
+  );
+  server.registerTool(
+    "associate_tickets_to_change",
+    {
+      title: "Associate Tickets to Change",
+      description: "Associate existing tickets with a Change by updating each ticket using Freshservice's documented Change association object.",
+      inputSchema: external_exports.object({
+        change_id: external_exports.number().int().positive().describe(
+          "Change display ID (Freshservice requires display_id in the association body)"
+        ),
+        ticket_ids: external_exports.array(external_exports.number().int().positive()).min(1).max(100).describe(
+          "Freshservice ticket IDs to associate"
+        ),
+        association_type: external_exports.enum(["change_initiated_by_ticket", "change_initiating_ticket"]).optional().describe(
+          "Relationship direction. Default: change_initiated_by_ticket (the ticket initiated the Change); use change_initiating_ticket when the Change initiated the ticket."
+        )
+      })
+    },
+    async ({ change_id, ticket_ids, association_type }) => {
+      const tickets = await associateTicketsToChange(
+        config2,
+        change_id,
+        ticket_ids,
+        association_type
+      );
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            change_id,
+            association_type: association_type ?? "change_initiated_by_ticket",
+            associated_ticket_ids: tickets.map((ticket) => ticket.id)
+          }, null, 2)
+        }]
+      };
+    }
+  );
+  server.registerTool(
+    "add_change_note",
+    {
+      title: "Add Change Note",
+      description: "Add a note to a Freshservice Change.",
+      inputSchema: external_exports.object({
+        change_id: external_exports.number().int().positive().describe("Freshservice Change ID"),
+        body: external_exports.string().min(1).describe(`Note body. ${HTML_FIELD_HINT}`),
+        notify_emails: external_exports.array(external_exports.string().email()).optional().describe("Email addresses to notify")
+      })
+    },
+    async ({ change_id, body, notify_emails }) => {
+      const note = await addChangeNote(config2, change_id, { body, notify_emails });
+      return {
+        content: [{
+          type: "text",
+          text: `Note added to Change #${change_id} (note id: ${note.id}).`
+        }]
+      };
+    }
+  );
+}
+
 // src/tools/agents.ts
 init_esm();
 init_freshservice_client();
@@ -21587,15 +21987,18 @@ async function main() {
   const readonly2 = process.env.FRESHSERVICE_READONLY === "true";
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.1.0"
+    version: "0.2.0"
   });
   registerAgentTools(server, config2);
   if (readonly2) {
     const { registerReadOnlyTicketTools: registerReadOnlyTicketTools2 } = await Promise.resolve().then(() => (init_tickets_readonly(), tickets_readonly_exports));
+    const { registerReadOnlyChangeTools: registerReadOnlyChangeTools2 } = await Promise.resolve().then(() => (init_changes_readonly(), changes_readonly_exports));
     registerReadOnlyTicketTools2(server, config2);
+    registerReadOnlyChangeTools2(server, config2);
     console.error("Freshservice MCP Server running in read-only mode (stdio)");
   } else {
     registerTicketTools(server, config2);
+    registerChangeTools(server, config2);
     console.error("Freshservice MCP Server running on stdio");
   }
   const transport = new StdioServerTransport();

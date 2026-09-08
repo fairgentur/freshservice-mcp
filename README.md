@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Freshservice](https://freshservice.com). Manage your ITSM tickets, conversations, and agents directly from any MCP-compatible AI client (Kiro, Claude Desktop, Cursor, etc.).
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Freshservice](https://freshservice.com). Manage your ITSM tickets, changes, conversations, and agents directly from any MCP-compatible AI client (Kiro, Claude Desktop, Cursor, etc.).
 
 ## Features
 
@@ -15,6 +15,9 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Fr
 - ✏️ **Create tickets** — with full field support
 - 🔄 **Update tickets** — status, priority, assignment, tags
 - 📝 **Add notes or replies** — private notes or public replies
+- 🗂️ **Manage changes** — list, inspect, create, and update Changes
+- 🔗 **Associate tickets with changes** — supports both Freshservice relationship directions
+- 📝 **Add change notes** — add HTML-formatted notes to Changes
 - 👤 **Agent lookup** — get your own profile or search by email
 - 🔒 **Read-only mode** — disable all write operations with one env var
 
@@ -69,7 +72,7 @@ Reconnect MCP servers (or reload the window). You should now have access to all 
 
 ### Read-only mode
 
-Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mode, `create_ticket`, `update_ticket`, and `add_ticket_note` are not registered at all. Recommended for shared environments or autonomous agent setups against production instances.
+Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mode, only ticket, Change, and agent read tools are registered; all create, update, association, note, and reply tools are omitted. Recommended for shared environments or autonomous agent setups against production instances.
 
 ## Available Tools
 
@@ -81,6 +84,12 @@ Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mo
 | `create_ticket` | Create a new ticket |
 | `update_ticket` | Update ticket fields |
 | `add_ticket_note` | Add a private note or public reply |
+| `list_changes` | List Changes with query/view filters, sorting, and pagination |
+| `get_change` | Get full details of a Change |
+| `create_change` | Create a Change |
+| `update_change` | Update Change fields |
+| `associate_tickets_to_change` | Associate one or more tickets with a Change |
+| `add_change_note` | Add a note to a Change |
 | `get_me` | Get the authenticated agent's profile |
 | `list_agents` | List agents, optionally filter by email |
 
@@ -185,6 +194,18 @@ Useful optional fields:
 - `group_id` — route to a team
 - `responder_id` — assign directly to an agent
 - `tags` — categorization
+
+## Change Management
+
+Freshservice Changes use numeric values for their standard fields:
+
+- Status: 1=Open, 2=Planning, 3=Awaiting Approval, 4=Pending Release, 5=Pending Review, 6=Closed
+- Change type: 1=Minor, 2=Standard, 3=Major, 4=Emergency
+- Priority: 1=Low, 2=Medium, 3=High, 4=Urgent
+- Impact: 1=Low, 2=Medium, 3=High
+- Risk: 1=Low, 2=Medium, 3=High, 4=Very High
+
+`associate_tickets_to_change` uses the association shape documented by Freshservice's Ticket API. The default relationship, `change_initiated_by_ticket`, means the ticket initiated the Change. Use `association_type: "change_initiating_ticket"` when the Change initiated the ticket. `change_id` is placed in the documented nested `display_id` field.
 
 ## Local Development
 

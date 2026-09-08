@@ -42,6 +42,42 @@ export interface FsConversation {
   [key: string]: unknown;
 }
 
+export interface FsChange {
+  id: number;
+  subject: string;
+  description?: string;
+  description_text?: string;
+  status: 1 | 2 | 3 | 4 | 5 | 6;
+  priority: 1 | 2 | 3 | 4;
+  impact: 1 | 2 | 3;
+  risk: 1 | 2 | 3 | 4;
+  change_type: 1 | 2 | 3 | 4;
+  requester_id: number;
+  group_id?: number;
+  agent_id?: number;
+  planned_start_date?: string;
+  planned_end_date?: string;
+  planning_fields?: {
+    change_plan?: string;
+    backout_plan?: string;
+    [key: string]: unknown;
+  };
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface FsChangeNote {
+  id: number;
+  body?: string;
+  body_text?: string;
+  user_id?: number;
+  notify_emails?: string[] | null;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
 export interface FsAgent {
   id: number;
   first_name?: string;
@@ -312,6 +348,168 @@ export async function replyToTicket(
 }
 
 // ---------------------------------------------------------------------------
+// Change API
+// ---------------------------------------------------------------------------
+
+export interface ListChangesOptions {
+  query?: string;
+  view?: string;
+  updated_since?: string;
+  workspace_id?: number;
+  order_by?: string;
+  order_type?: "asc" | "desc";
+  limit?: number;
+  page?: number;
+}
+
+export interface CreateChangePayload {
+  subject: string;
+  description: string;
+  requester_id: number;
+  priority: 1 | 2 | 3 | 4;
+  status: 1 | 2 | 3 | 4 | 5 | 6;
+  impact: 1 | 2 | 3;
+  risk: 1 | 2 | 3 | 4;
+  change_type: 1 | 2 | 3 | 4;
+  planned_start_date: string;
+  planned_end_date: string;
+  change_plan?: string;
+  group_id?: number;
+  agent_id?: number;
+  [key: string]: unknown;
+}
+
+export interface UpdateChangePayload {
+  subject?: string;
+  description?: string;
+  requester_id?: number;
+  priority?: 1 | 2 | 3 | 4;
+  status?: 1 | 2 | 3 | 4 | 5 | 6;
+  impact?: 1 | 2 | 3;
+  risk?: 1 | 2 | 3 | 4;
+  change_type?: 1 | 2 | 3 | 4;
+  planned_start_date?: string;
+  planned_end_date?: string;
+  change_plan?: string;
+  group_id?: number;
+  agent_id?: number;
+  [key: string]: unknown;
+}
+
+function withChangePlan<T extends { change_plan?: string }>(payload: T): Omit<T, "change_plan"> & {
+  planning_fields?: { change_plan: string };
+} {
+  const { change_plan, ...rest } = payload;
+  return change_plan === undefined
+    ? rest
+    : { ...rest, planning_fields: { change_plan } };
+}
+
+export async function listChanges(
+  config: FreshserviceConfig,
+  options: ListChangesOptions = {}
+): Promise<FsChange[]> {
+  const limit = options.limit ?? 100;
+  const changes: FsChange[] = [];
+  const params: Record<string, string> = { per_page: "100" };
+
+  if (options.query) params.query = `"${options.query}"`;
+  if (options.view) params.view = options.view;
+  if (options.updated_since) params.updated_since = options.updated_since;
+  if (options.workspace_id !== undefined) params.workspace_id = String(options.workspace_id);
+  if (options.order_by) params.order_by = options.order_by;
+  if (options.order_type) params.order_type = options.order_type;
+
+  let page = options.page ?? 1;
+  while (changes.length < limit) {
+    params.page = String(page);
+    const data = await fsGet<{ changes: FsChange[] }>(config, "changes", params);
+    const batch = data.changes ?? [];
+    if (batch.length === 0) break;
+    for (const change of batch) {
+      changes.push(change);
+      if (changes.length >= limit) break;
+    }
+    if (batch.length < 100) break;
+    page++;
+  }
+
+  return changes;
+}
+
+export async function getChange(
+  config: FreshserviceConfig,
+  changeId: number,
+  include?: string
+): Promise<FsChange> {
+  const params: Record<string, string> = include ? { include } : {};
+  const data = await fsGet<{ change: FsChange }>(config, `changes/${changeId}`, params);
+  return data.change;
+}
+
+export async function createChange(
+  config: FreshserviceConfig,
+  payload: CreateChangePayload
+): Promise<FsChange> {
+  const data = await fsPost<{ change: FsChange }>(
+    config,
+    "changes",
+    withChangePlan(payload)
+  );
+  return data.change;
+}
+
+export async function updateChange(
+  config: FreshserviceConfig,
+  changeId: number,
+  payload: UpdateChangePayload
+): Promise<FsChange> {
+  const data = await fsPut<{ change: FsChange }>(
+    config,
+    `changes/${changeId}`,
+    withChangePlan(payload)
+  );
+  return data.change;
+}
+
+export type ChangeTicketAssociation =
+  | "change_initiated_by_ticket"
+  | "change_initiating_ticket";
+
+export async function associateTicketsToChange(
+  config: FreshserviceConfig,
+  changeDisplayId: number,
+  ticketIds: number[],
+  associationType: ChangeTicketAssociation = "change_initiated_by_ticket"
+): Promise<FsTicket[]> {
+  // Freshservice documents no dedicated Changes association endpoint and no
+  // associated_tickets field. Its documented ticket association body uses one
+  // of these relationship keys with a Change *display_id*. Updating each ticket
+  // is therefore the best-supported route; callers can select the inverse
+  // relationship if their workflow models a Change that initiates the ticket.
+  return Promise.all(
+    ticketIds.map((ticketId) =>
+      updateTicket(config, ticketId, {
+        [associationType]: { display_id: changeDisplayId },
+      })
+    )
+  );
+}
+
+export async function addChangeNote(
+  config: FreshserviceConfig,
+  changeId: number,
+  payload: { body: string; notify_emails?: string[] }
+): Promise<FsChangeNote> {
+  const data = await fsPost<{ note: FsChangeNote }>(
+    config,
+    `changes/${changeId}/notes`,
+    payload
+  );
+  return data.note;
+}
+
+// ---------------------------------------------------------------------------
 // Agents
 // ---------------------------------------------------------------------------
 
@@ -349,6 +547,38 @@ export const PRIORITY_MAP: Record<number, string> = {
   2: "Medium",
   3: "High",
   4: "Urgent",
+};
+
+/** Change priorities use the same numeric values as ticket priorities. */
+export const CHANGE_PRIORITY_MAP: Record<number, string> = PRIORITY_MAP;
+
+export const CHANGE_STATUS_MAP: Record<number, string> = {
+  1: "Open",
+  2: "Planning",
+  3: "Awaiting Approval",
+  4: "Pending Release",
+  5: "Pending Review",
+  6: "Closed",
+};
+
+export const CHANGE_TYPE_MAP: Record<number, string> = {
+  1: "Minor",
+  2: "Standard",
+  3: "Major",
+  4: "Emergency",
+};
+
+export const CHANGE_IMPACT_MAP: Record<number, string> = {
+  1: "Low",
+  2: "Medium",
+  3: "High",
+};
+
+export const CHANGE_RISK_MAP: Record<number, string> = {
+  1: "Low",
+  2: "Medium",
+  3: "High",
+  4: "Very High",
 };
 
 export async function getTicketStatuses(
