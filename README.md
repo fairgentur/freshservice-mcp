@@ -207,6 +207,8 @@ Freshservice Changes use numeric values for their standard fields:
 
 `associate_tickets_to_change` uses the association shape documented by Freshservice's Ticket API. The default relationship, `change_initiated_by_ticket`, means the ticket initiated the Change. Use `association_type: "change_initiating_ticket"` when the Change initiated the ticket. `change_id` is placed in the documented nested `display_id` field.
 
+Because the association is applied as a ticket update, Freshservice validates the whole ticket — so on an instance where `description` is a mandatory field, a ticket with an empty description would otherwise be rejected with a 400. The tool handles this transparently: it retries once with a minimal placeholder description, and only for tickets that genuinely have none. Existing descriptions are never overwritten.
+
 ## Local Development
 
 ```bash
