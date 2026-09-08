@@ -215,7 +215,9 @@ export function registerChangeTools(
       title: "Associate Tickets to Change",
       description:
         "Associate existing tickets with a Change by updating each ticket using Freshservice's " +
-        "documented Change association object.",
+        "documented Change association object. A ticket whose description is empty on an instance " +
+        "where description is mandatory is retried once with a minimal placeholder description so " +
+        "the association still lands; existing descriptions are never overwritten.",
       inputSchema: z.object({
         change_id: z.number().int().positive().describe(
           "Change display ID (Freshservice requires display_id in the association body)"

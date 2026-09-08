@@ -489,11 +489,64 @@ export async function associateTicketsToChange(
   // relationship if their workflow models a Change that initiates the ticket.
   return Promise.all(
     ticketIds.map((ticketId) =>
-      updateTicket(config, ticketId, {
-        [associationType]: { display_id: changeDisplayId },
-      })
+      associateOneTicket(config, ticketId, changeDisplayId, associationType)
     )
   );
+}
+
+/**
+ * Placeholder written into an otherwise-blank ticket description when the
+ * association PUT is rejected only because `description` is mandatory on this
+ * instance. A single "." is the least-invasive value that satisfies the
+ * validator without adding meaningful content.
+ */
+const BLANK_DESCRIPTION_PLACEHOLDER = ".";
+
+/** True when a thrown API error is the mandatory-`description` 400. */
+function isBlankDescriptionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  // Match the field-level validation Freshservice returns on a ticket PUT:
+  //   ... 400: {"errors":[{"field":"description","message":"It should not be blank ...
+  return (
+    message.includes("400") &&
+    message.includes('"field":"description"') &&
+    message.toLowerCase().includes("blank")
+  );
+}
+
+/**
+ * Associate a single ticket with a Change.
+ *
+ * The association is expressed as a ticket update (`PUT /tickets/{id}`), which
+ * Freshservice validates as a full ticket write. On instances where
+ * `description` is a mandatory field, a ticket whose description is empty is
+ * rejected with a 400 even though the association itself is valid. When that
+ * specific error occurs we retry ONCE, adding a minimal placeholder
+ * description so the association can land; every other error propagates
+ * unchanged.
+ */
+async function associateOneTicket(
+  config: FreshserviceConfig,
+  ticketId: number,
+  changeDisplayId: number,
+  associationType: ChangeTicketAssociation
+): Promise<FsTicket> {
+  const association = { [associationType]: { display_id: changeDisplayId } };
+  try {
+    return await updateTicket(config, ticketId, association);
+  } catch (error) {
+    if (!isBlankDescriptionError(error)) throw error;
+    // Retry with a placeholder description only if the ticket really has none,
+    // so we never overwrite existing content.
+    const existing = await getTicket(config, ticketId, "");
+    const currentDescription =
+      existing.description_text?.trim() || stripHtml(existing.description ?? "");
+    if (currentDescription) throw error;
+    return updateTicket(config, ticketId, {
+      ...association,
+      description: BLANK_DESCRIPTION_PLACEHOLDER,
+    });
+  }
 }
 
 export async function addChangeNote(
