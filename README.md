@@ -213,7 +213,9 @@ Then pass them to `create_ticket` or `update_ticket`:
 ```
 
 - `update_ticket` sends only the keys you pass; other custom fields keep their values. Pass `null` to clear a field.
-- Dropdown values must match one of the listed choices exactly, otherwise Freshservice rejects the request with a 400.
+- Custom dropdowns take the choice `value`, which must match exactly, otherwise Freshservice rejects the request with a 400. Built-in fields such as `status`, `priority` or `group` take the choice `id` (with `include_default: true`).
+- A nested (dependent) dropdown lists its lower levels under `nested_fields`; set each level under its own `name`.
+- `required` reflects whether the field is mandatory for agents.
 - `get_ticket` and `list_tickets` return a ticket's non-empty custom fields under `custom_fields`.
 
 ## Change Management

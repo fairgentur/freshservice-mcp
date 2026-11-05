@@ -39,7 +39,10 @@ export function nonEmptyCustomFields(
   return result;
 }
 
-/** Choices come as objects ({ value, nested_options }) or plain strings. */
+/**
+ * Choices come as objects ({ id, value, nested_options }) or plain strings.
+ * The id is kept: default fields (status, priority, group, ...) are written by id.
+ */
 function normalizeChoices(choices: unknown[] | undefined): unknown[] | undefined {
   if (!choices || choices.length === 0) return undefined;
   return choices.map((choice) => {
@@ -47,21 +50,37 @@ function normalizeChoices(choices: unknown[] | undefined): unknown[] | undefined
     const c = choice as Record<string, unknown>;
     const nested = (c.nested_options ?? c.choices) as unknown[] | undefined;
     const subChoices = Array.isArray(nested) ? normalizeChoices(nested) : undefined;
-    return subChoices ? { value: c.value, sub_choices: subChoices } : c.value;
+    return {
+      ...(c.id !== undefined ? { id: c.id } : {}),
+      value: c.value,
+      ...(subChoices ? { sub_choices: subChoices } : {}),
+    };
+  });
+}
+
+/** Levels 2 and 3 of a nested field, each written under its own name. */
+function normalizeNestedFields(nested: unknown[] | undefined) {
+  if (!nested || nested.length === 0) return undefined;
+  return nested.map((n) => {
+    const level = n as Record<string, unknown>;
+    return { name: level.name, label: level.label, level: level.level };
   });
 }
 
 function normalizeField(f: FsTicketField) {
   const choices = normalizeChoices(f.choices);
+  const nestedFields = normalizeNestedFields(f.nested_fields);
   return {
     name: f.name,
     label: f.label,
     field_type: f.field_type,
     custom: !f.default_field,
-    required: f.required ?? false,
+    // Ticket fields report required_for_agents; `required` is only a fallback.
+    required: f.required_for_agents ?? f.required ?? false,
     required_for_closure: f.required_for_closure ?? false,
     ...(f.description ? { description: f.description } : {}),
     ...(choices ? { choices } : {}),
+    ...(nestedFields ? { nested_fields: nestedFields } : {}),
   };
 }
 
@@ -75,9 +94,11 @@ export function registerTicketFieldTools(
       title: "List Ticket Fields",
       description:
         "List the ticket form fields of this Freshservice instance: internal name, label, " +
-        "type, whether it is required, and the allowed choices of dropdown fields. " +
+        "type, whether it is required for agents, and the allowed choices of dropdown fields. " +
         "Use the internal names (e.g. cf_release) as keys for `custom_fields` in " +
-        "create_ticket / update_ticket.",
+        "create_ticket / update_ticket. Custom dropdowns take the choice `value`; built-in " +
+        "fields such as status, priority or group take the choice `id`. Nested fields list " +
+        "their lower levels under `nested_fields`; set each level under its own name.",
       inputSchema: z.object({
         include_default: z
           .boolean()
