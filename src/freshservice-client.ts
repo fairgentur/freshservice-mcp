@@ -45,6 +45,7 @@ export interface FsTicketField {
   field_type: string;
   default_field: boolean;
   required?: boolean;
+  required_for_agents?: boolean;
   required_for_closure?: boolean;
   choices?: unknown[];
   nested_fields?: unknown[];
