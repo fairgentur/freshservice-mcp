@@ -19,6 +19,7 @@ import {
   DEFAULT_STATUS_MAP,
   PRIORITY_MAP,
 } from "../freshservice-client.js";
+import { customFieldsSchema, nonEmptyCustomFields } from "./ticket-fields.js";
 
 /**
  * Shared wording for every rich-text field. Freshservice stores the value verbatim,
@@ -55,6 +56,7 @@ function normalizeTicket(
     created_at: t.created_at,
     updated_at: t.updated_at,
     due_by: t.due_by ?? null,
+    custom_fields: nonEmptyCustomFields(t.custom_fields),
     url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/tickets/${t.id}`,
   };
 }
@@ -73,7 +75,7 @@ export function registerTicketTools(
       description:
         "List Freshservice tickets. Use `query` for advanced filtering " +
         "(e.g. \"agent_id:123 AND status:2\") or `filter` for built-in presets. " +
-        "Returns id, subject, status, priority, type, requester, dates and URL.",
+        "Returns id, subject, status, priority, type, requester, dates, non-empty custom fields and URL.",
       inputSchema: z.object({
         query: z
           .string()
@@ -258,9 +260,10 @@ export function registerTicketTools(
           .array(z.string().email())
           .optional()
           .describe("CC email addresses"),
+        custom_fields: customFieldsSchema,
       }),
     },
-    async ({ subject, description, email, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails }) => {
+    async ({ subject, description, email, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails, custom_fields }) => {
       const ticket = await createTicket(config, {
         subject,
         description,
@@ -275,6 +278,7 @@ export function registerTicketTools(
         category,
         sub_category,
         cc_emails,
+        custom_fields,
       });
       const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
       return {
@@ -317,9 +321,10 @@ export function registerTicketTools(
         responder_id: z.number().int().positive().optional().describe("Assigned agent ID"),
         tags: z.array(z.string()).optional().describe("New tag list (replaces existing)"),
         type: z.string().optional().describe("Ticket type"),
+        custom_fields: customFieldsSchema,
       }),
     },
-    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type }) => {
+    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type, custom_fields }) => {
       const payload: Record<string, unknown> = {};
       if (subject !== undefined) payload.subject = subject;
       if (description !== undefined) payload.description = description;
@@ -329,6 +334,8 @@ export function registerTicketTools(
       if (responder_id !== undefined) payload.responder_id = responder_id;
       if (tags !== undefined) payload.tags = tags;
       if (type !== undefined) payload.type = type;
+      // Only the given keys are sent; other custom fields keep their values.
+      if (custom_fields !== undefined) payload.custom_fields = custom_fields;
 
       const ticket = await updateTicket(config, ticket_id, payload);
       const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);

@@ -18,6 +18,7 @@ import { type FreshserviceConfig } from "./freshservice-client.js";
 import { registerTicketTools } from "./tools/tickets.js";
 import { registerChangeTools } from "./tools/changes.js";
 import { registerAgentTools } from "./tools/agents.js";
+import { registerTicketFieldTools } from "./tools/ticket-fields.js";
 
 // ---------------------------------------------------------------------------
 // Config & validation
@@ -50,11 +51,12 @@ async function main() {
 
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.2.0",
+    version: "0.3.0",
   });
 
   // Always register read tools
   registerAgentTools(server, config);
+  registerTicketFieldTools(server, config);
 
   // Register ticket and Change tools; if readonly, only read tools are registered
   if (readonly) {

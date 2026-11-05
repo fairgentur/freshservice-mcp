@@ -16,6 +16,7 @@ import {
   DEFAULT_STATUS_MAP,
   PRIORITY_MAP,
 } from "../freshservice-client.js";
+import { nonEmptyCustomFields } from "./ticket-fields.js";
 
 function statusLabel(status: number): string {
   return DEFAULT_STATUS_MAP[status] ?? String(status);
@@ -39,6 +40,7 @@ function normalizeTicket(t: Awaited<ReturnType<typeof getTicket>>) {
     created_at: t.created_at,
     updated_at: t.updated_at,
     due_by: t.due_by ?? null,
+    custom_fields: nonEmptyCustomFields(t.custom_fields),
     url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/tickets/${t.id}`,
   };
 }

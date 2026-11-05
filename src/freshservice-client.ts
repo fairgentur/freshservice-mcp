@@ -28,6 +28,26 @@ export interface FsTicket {
   updated_at: string;
   due_by?: string;
   requester?: { name?: string; email?: string; id?: number };
+  /** Instance-specific fields, keyed by their internal name (e.g. "cf_release"). */
+  custom_fields?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** Value accepted for a single custom field on ticket create/update. */
+export type CustomFieldValue = string | number | boolean | null;
+
+/** A ticket form field as returned by GET /ticket_form_fields. */
+export interface FsTicketField {
+  id: number;
+  name: string;
+  label: string;
+  description?: string;
+  field_type: string;
+  default_field: boolean;
+  required?: boolean;
+  required_for_closure?: boolean;
+  choices?: unknown[];
+  nested_fields?: unknown[];
   [key: string]: unknown;
 }
 
@@ -213,6 +233,7 @@ export interface CreateTicketPayload {
   type?: string;
   category?: string;
   sub_category?: string;
+  custom_fields?: Record<string, CustomFieldValue>;
   [key: string]: unknown;
 }
 
@@ -225,6 +246,7 @@ export interface UpdateTicketPayload {
   responder_id?: number;
   tags?: string[];
   type?: string;
+  custom_fields?: Record<string, CustomFieldValue>;
   [key: string]: unknown;
 }
 
@@ -297,6 +319,20 @@ export async function updateTicket(
     payload
   );
   return data.ticket;
+}
+
+// ---------------------------------------------------------------------------
+// Ticket form fields
+// ---------------------------------------------------------------------------
+
+export async function listTicketFields(
+  config: FreshserviceConfig
+): Promise<FsTicketField[]> {
+  const data = await fsGet<{ ticket_fields: FsTicketField[] }>(
+    config,
+    "ticket_form_fields"
+  );
+  return data.ticket_fields ?? [];
 }
 
 // ---------------------------------------------------------------------------
