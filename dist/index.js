@@ -11104,6 +11104,13 @@ async function updateTicket(config2, ticketId, payload) {
   );
   return data.ticket;
 }
+async function listTicketFields(config2) {
+  const data = await fsGet(
+    config2,
+    "ticket_form_fields"
+  );
+  return data.ticket_fields ?? [];
+}
 async function getTicketConversations(config2, ticketId) {
   const data = await fsGet(
     config2,
@@ -11180,11 +11187,28 @@ async function updateChange(config2, changeId, payload) {
 async function associateTicketsToChange(config2, changeDisplayId, ticketIds, associationType = "change_initiated_by_ticket") {
   return Promise.all(
     ticketIds.map(
-      (ticketId) => updateTicket(config2, ticketId, {
-        [associationType]: { display_id: changeDisplayId }
-      })
+      (ticketId) => associateOneTicket(config2, ticketId, changeDisplayId, associationType)
     )
   );
+}
+function isBlankDescriptionError(error2) {
+  const message = error2 instanceof Error ? error2.message : String(error2);
+  return message.includes("400") && message.includes('"field":"description"') && message.toLowerCase().includes("blank");
+}
+async function associateOneTicket(config2, ticketId, changeDisplayId, associationType) {
+  const association = { [associationType]: { display_id: changeDisplayId } };
+  try {
+    return await updateTicket(config2, ticketId, association);
+  } catch (error2) {
+    if (!isBlankDescriptionError(error2)) throw error2;
+    const existing = await getTicket(config2, ticketId);
+    const currentDescription = existing.description_text?.trim() || stripHtml(existing.description ?? "");
+    if (currentDescription) throw error2;
+    return updateTicket(config2, ticketId, {
+      ...association,
+      description: BLANK_DESCRIPTION_PLACEHOLDER
+    });
+  }
 }
 async function addChangeNote(config2, changeId, payload) {
   const data = await fsPost(
@@ -11206,10 +11230,11 @@ async function listAgents(config2, options = {}) {
   const data = await fsGet(config2, "agents", params);
   return data.agents ?? [];
 }
-var DEFAULT_STATUS_MAP, PRIORITY_MAP, CHANGE_PRIORITY_MAP, CHANGE_STATUS_MAP, CHANGE_TYPE_MAP, CHANGE_IMPACT_MAP, CHANGE_RISK_MAP;
+var BLANK_DESCRIPTION_PLACEHOLDER, DEFAULT_STATUS_MAP, PRIORITY_MAP, CHANGE_PRIORITY_MAP, CHANGE_STATUS_MAP, CHANGE_TYPE_MAP, CHANGE_IMPACT_MAP, CHANGE_RISK_MAP;
 var init_freshservice_client = __esm({
   "src/freshservice-client.ts"() {
     "use strict";
+    BLANK_DESCRIPTION_PLACEHOLDER = ".";
     DEFAULT_STATUS_MAP = {
       2: "Open",
       3: "Pending",
@@ -11251,6 +11276,77 @@ var init_freshservice_client = __esm({
   }
 });
 
+// src/tools/ticket-fields.ts
+function nonEmptyCustomFields(customFields) {
+  const result = {};
+  for (const [name, value] of Object.entries(customFields ?? {})) {
+    if (value !== null && value !== void 0 && value !== "") result[name] = value;
+  }
+  return result;
+}
+function normalizeChoices(choices) {
+  if (!choices || choices.length === 0) return void 0;
+  return choices.map((choice) => {
+    if (typeof choice !== "object" || choice === null) return choice;
+    const c = choice;
+    const nested = c.nested_options ?? c.choices;
+    const subChoices = Array.isArray(nested) ? normalizeChoices(nested) : void 0;
+    return subChoices ? { value: c.value, sub_choices: subChoices } : c.value;
+  });
+}
+function normalizeField(f) {
+  const choices = normalizeChoices(f.choices);
+  return {
+    name: f.name,
+    label: f.label,
+    field_type: f.field_type,
+    custom: !f.default_field,
+    required: f.required ?? false,
+    required_for_closure: f.required_for_closure ?? false,
+    ...f.description ? { description: f.description } : {},
+    ...choices ? { choices } : {}
+  };
+}
+function registerTicketFieldTools(server, config2) {
+  server.registerTool(
+    "list_ticket_fields",
+    {
+      title: "List Ticket Fields",
+      description: "List the ticket form fields of this Freshservice instance: internal name, label, type, whether it is required, and the allowed choices of dropdown fields. Use the internal names (e.g. cf_release) as keys for `custom_fields` in create_ticket / update_ticket.",
+      inputSchema: external_exports.object({
+        include_default: external_exports.boolean().optional().describe("Also list built-in fields such as status or priority (default: false, custom fields only)")
+      })
+    },
+    async ({ include_default }) => {
+      const fields = await listTicketFields(config2);
+      const selected = include_default ? fields : fields.filter((f) => !f.default_field);
+      if (selected.length === 0) {
+        return { content: [{ type: "text", text: "No ticket fields found." }] };
+      }
+      const normalized = selected.map(normalizeField);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ count: normalized.length, fields: normalized }, null, 2)
+          }
+        ]
+      };
+    }
+  );
+}
+var customFieldsSchema;
+var init_ticket_fields = __esm({
+  "src/tools/ticket-fields.ts"() {
+    "use strict";
+    init_esm();
+    init_freshservice_client();
+    customFieldsSchema = external_exports.record(external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean(), external_exports.null()])).optional().describe(
+      'Instance-specific custom fields, keyed by their internal name, e.g. {"cf_release": "2024.10", "cf_reviewed": true}. Call list_ticket_fields first to get the internal names and the allowed values of dropdown fields; Freshservice rejects unknown names and dropdown values that are not in the choice list. Pass null to clear a field.'
+    );
+  }
+});
+
 // src/tools/tickets-readonly.ts
 var tickets_readonly_exports = {};
 __export(tickets_readonly_exports, {
@@ -11276,6 +11372,7 @@ function normalizeTicket2(t) {
     created_at: t.created_at,
     updated_at: t.updated_at,
     due_by: t.due_by ?? null,
+    custom_fields: nonEmptyCustomFields(t.custom_fields),
     url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/tickets/${t.id}`
   };
 }
@@ -11369,6 +11466,7 @@ var init_tickets_readonly = __esm({
     "use strict";
     init_esm();
     init_freshservice_client();
+    init_ticket_fields();
   }
 });
 
@@ -21447,6 +21545,7 @@ var StdioServerTransport = class {
 // src/tools/tickets.ts
 init_esm();
 init_freshservice_client();
+init_ticket_fields();
 var HTML_FIELD_HINT = 'HTML is supported \u2014 pass RAW tags (<p>, <b>, <ul>, <li>, <code>). Do NOT HTML-escape the markup: the value is stored verbatim, so &lt;p&gt; renders as the literal text "<p>" instead of a paragraph. Use entities only for characters that must appear literally in the content.';
 function statusLabel(status, statusMap) {
   return statusMap[status] ?? String(status);
@@ -21468,6 +21567,7 @@ function normalizeTicket(t, statusMap) {
     created_at: t.created_at,
     updated_at: t.updated_at,
     due_by: t.due_by ?? null,
+    custom_fields: nonEmptyCustomFields(t.custom_fields),
     url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/tickets/${t.id}`
   };
 }
@@ -21476,7 +21576,7 @@ function registerTicketTools(server, config2) {
     "list_tickets",
     {
       title: "List Tickets",
-      description: 'List Freshservice tickets. Use `query` for advanced filtering (e.g. "agent_id:123 AND status:2") or `filter` for built-in presets. Returns id, subject, status, priority, type, requester, dates and URL.',
+      description: 'List Freshservice tickets. Use `query` for advanced filtering (e.g. "agent_id:123 AND status:2") or `filter` for built-in presets. Returns id, subject, status, priority, type, requester, dates, non-empty custom fields and URL.',
       inputSchema: external_exports.object({
         query: external_exports.string().optional().describe(
           'Freshservice filter query, e.g. "agent_id:123 AND status:2 AND priority:3". Supports all fields documented at https://api.freshservice.com/#filter_tickets'
@@ -21582,10 +21682,11 @@ function registerTicketTools(server, config2) {
           "Ticket category. Required on Freshservice instances where the category field is mandatory (create_ticket fails with a 400 validation error listing the allowed values if omitted on such instances)."
         ),
         sub_category: external_exports.string().optional().describe("Ticket sub-category. Only meaningful together with `category`."),
-        cc_emails: external_exports.array(external_exports.string().email()).optional().describe("CC email addresses")
+        cc_emails: external_exports.array(external_exports.string().email()).optional().describe("CC email addresses"),
+        custom_fields: customFieldsSchema
       })
     },
-    async ({ subject, description, email: email2, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails }) => {
+    async ({ subject, description, email: email2, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails, custom_fields }) => {
       const ticket = await createTicket(config2, {
         subject,
         description,
@@ -21599,7 +21700,8 @@ function registerTicketTools(server, config2) {
         type,
         category,
         sub_category,
-        cc_emails
+        cc_emails,
+        custom_fields
       });
       const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
       return {
@@ -21628,10 +21730,11 @@ ${JSON.stringify(result, null, 2)}`
         group_id: external_exports.number().int().positive().optional().describe("Agent group ID"),
         responder_id: external_exports.number().int().positive().optional().describe("Assigned agent ID"),
         tags: external_exports.array(external_exports.string()).optional().describe("New tag list (replaces existing)"),
-        type: external_exports.string().optional().describe("Ticket type")
+        type: external_exports.string().optional().describe("Ticket type"),
+        custom_fields: customFieldsSchema
       })
     },
-    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type }) => {
+    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type, custom_fields }) => {
       const payload = {};
       if (subject !== void 0) payload.subject = subject;
       if (description !== void 0) payload.description = description;
@@ -21641,6 +21744,7 @@ ${JSON.stringify(result, null, 2)}`
       if (responder_id !== void 0) payload.responder_id = responder_id;
       if (tags !== void 0) payload.tags = tags;
       if (type !== void 0) payload.type = type;
+      if (custom_fields !== void 0) payload.custom_fields = custom_fields;
       const ticket = await updateTicket(config2, ticket_id, payload);
       const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
       return {
@@ -21857,7 +21961,7 @@ ${JSON.stringify(normalizeChange(change), null, 2)}`
     "associate_tickets_to_change",
     {
       title: "Associate Tickets to Change",
-      description: "Associate existing tickets with a Change by updating each ticket using Freshservice's documented Change association object.",
+      description: "Associate existing tickets with a Change by updating each ticket using Freshservice's documented Change association object. A ticket whose description is empty on an instance where description is mandatory is retried once with a minimal placeholder description so the association still lands; existing descriptions are never overwritten.",
       inputSchema: external_exports.object({
         change_id: external_exports.number().int().positive().describe(
           "Change display ID (Freshservice requires display_id in the association body)"
@@ -21971,6 +22075,7 @@ function registerAgentTools(server, config2) {
 }
 
 // src/index.ts
+init_ticket_fields();
 function loadConfig() {
   const domain = process.env.FRESHSERVICE_DOMAIN;
   const apiKey = process.env.FRESHSERVICE_API_KEY;
@@ -21987,9 +22092,10 @@ async function main() {
   const readonly2 = process.env.FRESHSERVICE_READONLY === "true";
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.2.0"
+    version: "0.3.0"
   });
   registerAgentTools(server, config2);
+  registerTicketFieldTools(server, config2);
   if (readonly2) {
     const { registerReadOnlyTicketTools: registerReadOnlyTicketTools2 } = await Promise.resolve().then(() => (init_tickets_readonly(), tickets_readonly_exports));
     const { registerReadOnlyChangeTools: registerReadOnlyChangeTools2 } = await Promise.resolve().then(() => (init_changes_readonly(), changes_readonly_exports));

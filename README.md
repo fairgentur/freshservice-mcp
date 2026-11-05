@@ -14,6 +14,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Fr
 - 💬 **Read conversations** — all replies and internal notes
 - ✏️ **Create tickets** — with full field support
 - 🔄 **Update tickets** — status, priority, assignment, tags
+- 🧩 **Custom fields** — discover instance-specific ticket fields and read/write them
 - 📝 **Add notes or replies** — private notes or public replies
 - 🗂️ **Manage changes** — list, inspect, create, and update Changes
 - 🔗 **Associate tickets with changes** — supports both Freshservice relationship directions
@@ -84,6 +85,7 @@ Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mo
 | `create_ticket` | Create a new ticket |
 | `update_ticket` | Update ticket fields |
 | `add_ticket_note` | Add a private note or public reply |
+| `list_ticket_fields` | List ticket form fields with internal names, types and dropdown choices |
 | `list_changes` | List Changes with query/view filters, sorting, and pagination |
 | `get_change` | Get full details of a Change |
 | `create_change` | Create a Change |
@@ -194,6 +196,25 @@ Useful optional fields:
 - `group_id` — route to a team
 - `responder_id` — assign directly to an agent
 - `tags` — categorization
+- `custom_fields` — instance-specific fields (see below)
+
+## Custom Fields
+
+Custom ticket fields are addressed by their internal name (`cf_...`), not by the label shown in the UI. Call `list_ticket_fields` to get the names, field types and the allowed values of dropdown fields:
+
+```json
+{ "name": "cf_release", "label": "Release", "field_type": "custom_text", "custom": true, "required": false }
+```
+
+Then pass them to `create_ticket` or `update_ticket`:
+
+```json
+{ "ticket_id": 12345, "custom_fields": { "cf_release": "2024.10", "cf_reviewed": true } }
+```
+
+- `update_ticket` sends only the keys you pass; other custom fields keep their values. Pass `null` to clear a field.
+- Dropdown values must match one of the listed choices exactly, otherwise Freshservice rejects the request with a 400.
+- `get_ticket` and `list_tickets` return a ticket's non-empty custom fields under `custom_fields`.
 
 ## Change Management
 
