@@ -19,6 +19,7 @@ import { registerTicketTools } from "./tools/tickets.js";
 import { registerChangeTools } from "./tools/changes.js";
 import { registerAgentTools } from "./tools/agents.js";
 import { registerTicketFieldTools } from "./tools/ticket-fields.js";
+import { registerAttachmentTools } from "./tools/attachments.js";
 
 // ---------------------------------------------------------------------------
 // Config & validation
@@ -57,6 +58,7 @@ async function main() {
   // Always register read tools
   registerAgentTools(server, config);
   registerTicketFieldTools(server, config);
+  registerAttachmentTools(server, config);
 
   // Register ticket and Change tools; if readonly, only read tools are registered
   if (readonly) {

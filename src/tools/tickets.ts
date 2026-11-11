@@ -127,26 +127,28 @@ export function registerTicketTools(
       title: "Get Ticket",
       description:
         "Retrieve full details of a single Freshservice ticket by ID, " +
-        "including description, status, priority, requester and stats.",
+        "including description, status, priority, requester, stats and attachment metadata. " +
+        "Use list_ticket_attachments for files from both the ticket and its conversations.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
         include: z
           .string()
           .optional()
           .describe(
-            "Comma-separated extra includes: requester, stats, conversations, assets, problem, change. " +
-            "Default: requester,stats"
+            "Comma-separated extra includes: requester, stats, conversations, assets, problem, change, ticket_attachments. " +
+            "Default: requester,stats,ticket_attachments"
           ),
       }),
     },
     async ({ ticket_id, include }) => {
-      const ticket = await getTicket(config, ticket_id, include ?? "requester,stats");
+      const ticket = await getTicket(config, ticket_id, include ?? "requester,stats,ticket_attachments");
       const description =
         ticket.description_text?.trim() ??
         stripHtml(ticket.description ?? "");
       const result = {
         ...normalizeTicket(ticket, DEFAULT_STATUS_MAP),
         description,
+        attachments: ticket.attachments ?? [],
       };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -162,7 +164,7 @@ export function registerTicketTools(
     {
       title: "Get Ticket Comments",
       description:
-        "Retrieve all conversations (replies and notes) for a Freshservice ticket.",
+        "Retrieve all conversations (replies and notes), including attachment metadata, for a Freshservice ticket.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
       }),
@@ -179,6 +181,7 @@ export function registerTicketTools(
         user_id: c.user_id ?? null,
         created_at: c.created_at,
         body: c.body_text?.trim() ?? stripHtml(c.body ?? ""),
+        attachments: c.attachments ?? [],
       }));
       return {
         content: [

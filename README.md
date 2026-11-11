@@ -12,6 +12,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Fr
 - 📋 **List tickets** — powerful filter queries or built-in presets
 - 🔍 **Get ticket details** — full description, stats, and metadata
 - 💬 **Read conversations** — all replies and internal notes
+- 📎 **Retrieve attachments** — list ticket and conversation files, download their contents
 - ✏️ **Create tickets** — with full field support
 - 🔄 **Update tickets** — status, priority, assignment, tags
 - 🧩 **Custom fields** — discover instance-specific ticket fields and read/write them
@@ -82,6 +83,8 @@ Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mo
 | `list_tickets` | List tickets with filter query or built-in preset |
 | `get_ticket` | Get full details of a single ticket |
 | `get_ticket_comments` | Get all conversations for a ticket |
+| `list_ticket_attachments` | List files from a ticket and all its conversations, with source context |
+| `download_attachment` | Download file contents by attachment ID (up to 10 MiB) |
 | `create_ticket` | Create a new ticket |
 | `update_ticket` | Update ticket fields |
 | `add_ticket_note` | Add a private note or public reply |
@@ -218,6 +221,37 @@ Then pass them to `create_ticket` or `update_ticket`:
 - `required` reflects whether the field is mandatory for agents.
 - `get_ticket` and `list_tickets` return a ticket's non-empty custom fields under `custom_fields`.
 
+## Attachments
+
+`get_ticket` returns ticket attachment metadata under `attachments` (included by default).
+`get_ticket_comments` returns attachment metadata on each conversation and follows all pages.
+For a combined list, call `list_ticket_attachments` with `ticket_id`. Each entry contains the
+metadata supplied by Freshservice (ID, name, content type, size, attachment URL and dates),
+plus `source` (`ticket` or `conversation`), `conversation_id` and `private` (null for ticket files).
+This covers the ticket's attachment array and conversation attachment arrays; inline HTML images
+and service-item custom fields are not extracted. All attachment tools work in read-only mode.
+
+```
+List the attachments on ticket #12345, then download the log file and the screenshot.
+```
+
+Use an attachment's `id` with `download_attachment`:
+
+```json
+{ "attachment_id": 19852343 }
+```
+
+The tool uses Freshservice's authenticated [`GET /api/v2/attachments/[id]`](https://api.freshservice.com/#download_attachment)
+endpoint. The API agent must have access to the parent entity. Text files are returned as
+embedded text resources, PNG/JPEG/GIF/WebP as MCP images, and other files (including PDFs)
+as base64 embedded resources. Rendering or extracting binary resources depends on the MCP client.
+If Freshservice omits an ID, the listed `attachment_url` remains available for direct download.
+
+Downloads have a 30-second timeout and a 10 MiB limit, enforced while reading the response
+even without a Content-Length header. Larger files can be downloaded directly using the
+listed URL. HTTPS redirects to signed CDN URLs are supported without forwarding the API key
+outside the Freshservice origin. The server does not write files to disk.
+
 ## Change Management
 
 Freshservice Changes use numeric values for their standard fields:
@@ -240,6 +274,9 @@ cd freshservice-mcp
 npm install
 npm run build
 ```
+
+Run `npm run typecheck` and `npm test` to check types and the attachment regression tests.
+The tests use mock HTTP responses and MCP clients; no Freshservice credentials are needed.
 
 Then point your MCP client at the local build:
 

@@ -9,6 +9,16 @@ export interface FreshserviceConfig {
   apiKey: string;
 }
 
+export interface FsAttachment {
+  id?: number;
+  name: string;
+  content_type: string;
+  size: number;
+  attachment_url: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface FsTicket {
   id: number;
   subject: string;
@@ -30,6 +40,7 @@ export interface FsTicket {
   requester?: { name?: string; email?: string; id?: number };
   /** Instance-specific fields, keyed by their internal name (e.g. "cf_release"). */
   custom_fields?: Record<string, unknown>;
+  attachments?: FsAttachment[];
   [key: string]: unknown;
 }
 
@@ -60,6 +71,7 @@ export interface FsConversation {
   user_id?: number;
   from_email?: string;
   created_at: string;
+  attachments?: FsAttachment[];
   [key: string]: unknown;
 }
 
@@ -344,11 +356,96 @@ export async function getTicketConversations(
   config: FreshserviceConfig,
   ticketId: number
 ): Promise<FsConversation[]> {
-  const data = await fsGet<{ conversations: FsConversation[] }>(
-    config,
-    `tickets/${ticketId}/conversations`
-  );
-  return data.conversations ?? [];
+  const conversations: FsConversation[] = [];
+  for (let page = 1; ; page++) {
+    const data = await fsGet<{ conversations: FsConversation[] }>(
+      config,
+      `tickets/${ticketId}/conversations`,
+      { per_page: "100", page: String(page) }
+    );
+    const batch = data.conversations ?? [];
+    conversations.push(...batch);
+    if (batch.length < 100) return conversations;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Attachment downloads (binary, rather than the JSON HTTP primitives above)
+// ---------------------------------------------------------------------------
+
+/** Bound both memory use and the size of the embedded MCP resource. */
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+export async function downloadAttachment(
+  config: FreshserviceConfig,
+  attachmentId: number
+): Promise<{ data: Buffer; contentType: string }> {
+  if (!Number.isSafeInteger(attachmentId) || attachmentId <= 0) {
+    throw new Error("attachment_id must be a positive safe integer.");
+  }
+
+  const endpoint = new URL(`https://${config.domain}/api/v2/attachments/${attachmentId}`);
+  let url = endpoint;
+  let authorization: string | undefined = basicAuth(config.apiKey);
+  const signal = AbortSignal.timeout(30_000);
+
+  for (let redirects = 0; ; redirects++) {
+    const res = await fetch(url.toString(), {
+      headers: authorization ? { Authorization: authorization } : {},
+      redirect: "manual",
+      signal,
+    });
+
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      await res.body?.cancel();
+      const location = res.headers.get("location");
+      if (!location || redirects >= 5) {
+        throw new Error("Attachment download failed: missing redirect location or too many redirects.");
+      }
+      const next = new URL(location, url);
+      if (next.protocol !== "https:" || next.username || next.password) {
+        throw new Error("Attachment download redirects must use HTTPS without URL credentials.");
+      }
+      // Freshservice may redirect to signed CDN URLs. Once we leave the API
+      // origin, never forward or reintroduce the agent's API key.
+      if (next.origin !== endpoint.origin) authorization = undefined;
+      url = next;
+      continue;
+    }
+
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`Freshservice attachment ${attachmentId} download failed: HTTP ${res.status}`);
+    }
+    if (Number(res.headers.get("content-length")) > MAX_ATTACHMENT_BYTES) {
+      await res.body?.cancel();
+      throw new Error("Attachment exceeds the 10 MiB download limit.");
+    }
+
+    const reader = res.body?.getReader();
+    const chunks: Buffer[] = [];
+    let size = 0;
+    if (reader) {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_ATTACHMENT_BYTES) {
+            await reader.cancel();
+            throw new Error("Attachment exceeds the 10 MiB download limit.");
+          }
+          chunks.push(Buffer.from(value));
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    return {
+      data: Buffer.concat(chunks, size),
+      contentType: res.headers.get("content-type") ?? "application/octet-stream",
+    };
+  }
 }
 
 export interface AddNotePayload {
