@@ -11112,11 +11112,78 @@ async function listTicketFields(config2) {
   return data.ticket_fields ?? [];
 }
 async function getTicketConversations(config2, ticketId) {
-  const data = await fsGet(
-    config2,
-    `tickets/${ticketId}/conversations`
-  );
-  return data.conversations ?? [];
+  const conversations = [];
+  for (let page = 1; ; page++) {
+    const data = await fsGet(
+      config2,
+      `tickets/${ticketId}/conversations`,
+      { per_page: "100", page: String(page) }
+    );
+    const batch = data.conversations ?? [];
+    conversations.push(...batch);
+    if (batch.length < 100) return conversations;
+  }
+}
+async function downloadAttachment(config2, attachmentId) {
+  if (!Number.isSafeInteger(attachmentId) || attachmentId <= 0) {
+    throw new Error("attachment_id must be a positive safe integer.");
+  }
+  const endpoint = new URL(`https://${config2.domain}/api/v2/attachments/${attachmentId}`);
+  let url = endpoint;
+  let authorization = basicAuth(config2.apiKey);
+  const signal = AbortSignal.timeout(3e4);
+  for (let redirects = 0; ; redirects++) {
+    const res = await fetch(url.toString(), {
+      headers: authorization ? { Authorization: authorization } : {},
+      redirect: "manual",
+      signal
+    });
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      await res.body?.cancel();
+      const location = res.headers.get("location");
+      if (!location || redirects >= 5) {
+        throw new Error("Attachment download failed: missing redirect location or too many redirects.");
+      }
+      const next = new URL(location, url);
+      if (next.protocol !== "https:" || next.username || next.password) {
+        throw new Error("Attachment download redirects must use HTTPS without URL credentials.");
+      }
+      if (next.origin !== endpoint.origin) authorization = void 0;
+      url = next;
+      continue;
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`Freshservice attachment ${attachmentId} download failed: HTTP ${res.status}`);
+    }
+    if (Number(res.headers.get("content-length")) > MAX_ATTACHMENT_BYTES) {
+      await res.body?.cancel();
+      throw new Error("Attachment exceeds the 10 MiB download limit.");
+    }
+    const reader = res.body?.getReader();
+    const chunks = [];
+    let size = 0;
+    if (reader) {
+      try {
+        for (; ; ) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_ATTACHMENT_BYTES) {
+            await reader.cancel();
+            throw new Error("Attachment exceeds the 10 MiB download limit.");
+          }
+          chunks.push(Buffer.from(value));
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    return {
+      data: Buffer.concat(chunks, size),
+      contentType: res.headers.get("content-type") ?? "application/octet-stream"
+    };
+  }
 }
 async function addTicketNote(config2, ticketId, payload) {
   const data = await fsPost(
@@ -11230,10 +11297,11 @@ async function listAgents(config2, options = {}) {
   const data = await fsGet(config2, "agents", params);
   return data.agents ?? [];
 }
-var BLANK_DESCRIPTION_PLACEHOLDER, DEFAULT_STATUS_MAP, PRIORITY_MAP, CHANGE_PRIORITY_MAP, CHANGE_STATUS_MAP, CHANGE_TYPE_MAP, CHANGE_IMPACT_MAP, CHANGE_RISK_MAP;
+var MAX_ATTACHMENT_BYTES, BLANK_DESCRIPTION_PLACEHOLDER, DEFAULT_STATUS_MAP, PRIORITY_MAP, CHANGE_PRIORITY_MAP, CHANGE_STATUS_MAP, CHANGE_TYPE_MAP, CHANGE_IMPACT_MAP, CHANGE_RISK_MAP;
 var init_freshservice_client = __esm({
   "src/freshservice-client.ts"() {
     "use strict";
+    MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
     BLANK_DESCRIPTION_PLACEHOLDER = ".";
     DEFAULT_STATUS_MAP = {
       2: "Open",
@@ -11423,16 +11491,16 @@ function registerReadOnlyTicketTools(server, config2) {
     "get_ticket",
     {
       title: "Get Ticket",
-      description: "Retrieve full details of a single Freshservice ticket by ID.",
+      description: "Retrieve full details of a single Freshservice ticket by ID, including attachment metadata. Use list_ticket_attachments for files from both the ticket and its conversations.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive(),
-        include: external_exports.string().optional()
+        include: external_exports.string().optional().describe("Default: requester,stats,ticket_attachments")
       })
     },
     async ({ ticket_id, include }) => {
-      const ticket = await getTicket(config2, ticket_id, include ?? "requester,stats");
+      const ticket = await getTicket(config2, ticket_id, include ?? "requester,stats,ticket_attachments");
       const description = ticket.description_text?.trim() ?? stripHtml(ticket.description ?? "");
-      const result = { ...normalizeTicket2(ticket), description };
+      const result = { ...normalizeTicket2(ticket), description, attachments: ticket.attachments ?? [] };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
       };
@@ -11442,7 +11510,7 @@ function registerReadOnlyTicketTools(server, config2) {
     "get_ticket_comments",
     {
       title: "Get Ticket Comments",
-      description: "Retrieve all conversations (replies and notes) for a Freshservice ticket.",
+      description: "Retrieve all conversations (replies and notes), including attachment metadata, for a Freshservice ticket.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive()
       })
@@ -11458,7 +11526,8 @@ function registerReadOnlyTicketTools(server, config2) {
         from_email: c.from_email ?? null,
         user_id: c.user_id ?? null,
         created_at: c.created_at,
-        body: c.body_text?.trim() ?? stripHtml(c.body ?? "")
+        body: c.body_text?.trim() ?? stripHtml(c.body ?? ""),
+        attachments: c.attachments ?? []
       }));
       return {
         content: [
@@ -21620,20 +21689,21 @@ function registerTicketTools(server, config2) {
     "get_ticket",
     {
       title: "Get Ticket",
-      description: "Retrieve full details of a single Freshservice ticket by ID, including description, status, priority, requester and stats.",
+      description: "Retrieve full details of a single Freshservice ticket by ID, including description, status, priority, requester, stats and attachment metadata. Use list_ticket_attachments for files from both the ticket and its conversations.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive().describe("Freshservice ticket ID"),
         include: external_exports.string().optional().describe(
-          "Comma-separated extra includes: requester, stats, conversations, assets, problem, change. Default: requester,stats"
+          "Comma-separated extra includes: requester, stats, conversations, assets, problem, change, ticket_attachments. Default: requester,stats,ticket_attachments"
         )
       })
     },
     async ({ ticket_id, include }) => {
-      const ticket = await getTicket(config2, ticket_id, include ?? "requester,stats");
+      const ticket = await getTicket(config2, ticket_id, include ?? "requester,stats,ticket_attachments");
       const description = ticket.description_text?.trim() ?? stripHtml(ticket.description ?? "");
       const result = {
         ...normalizeTicket(ticket, DEFAULT_STATUS_MAP),
-        description
+        description,
+        attachments: ticket.attachments ?? []
       };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
@@ -21644,7 +21714,7 @@ function registerTicketTools(server, config2) {
     "get_ticket_comments",
     {
       title: "Get Ticket Comments",
-      description: "Retrieve all conversations (replies and notes) for a Freshservice ticket.",
+      description: "Retrieve all conversations (replies and notes), including attachment metadata, for a Freshservice ticket.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive().describe("Freshservice ticket ID")
       })
@@ -21660,7 +21730,8 @@ function registerTicketTools(server, config2) {
         from_email: c.from_email ?? null,
         user_id: c.user_id ?? null,
         created_at: c.created_at,
-        body: c.body_text?.trim() ?? stripHtml(c.body ?? "")
+        body: c.body_text?.trim() ?? stripHtml(c.body ?? ""),
+        attachments: c.attachments ?? []
       }));
       return {
         content: [
@@ -22090,6 +22161,70 @@ function registerAgentTools(server, config2) {
 
 // src/index.ts
 init_ticket_fields();
+
+// src/tools/attachments.ts
+init_esm();
+init_freshservice_client();
+function registerAttachmentTools(server, config2) {
+  server.registerTool(
+    "list_ticket_attachments",
+    {
+      title: "List Ticket Attachments",
+      description: "List attachment metadata from a ticket description and every conversation (including private notes). Returns IDs when supplied by Freshservice, names, MIME types, sizes, download URLs and source context. Use download_attachment with an attachment ID to retrieve the file contents.",
+      inputSchema: { ticket_id: external_exports.number().int().safe().positive() },
+      annotations: { readOnlyHint: true }
+    },
+    async ({ ticket_id }) => {
+      const ticket = await getTicket(config2, ticket_id, "ticket_attachments");
+      const conversations = await getTicketConversations(config2, ticket_id);
+      const attachments = [
+        ...(ticket.attachments ?? []).map((a) => ({
+          ...a,
+          source: "ticket",
+          conversation_id: null,
+          private: null
+        })),
+        ...conversations.flatMap((c) => (c.attachments ?? []).map((a) => ({
+          ...a,
+          source: "conversation",
+          conversation_id: c.id,
+          private: c.private
+        })))
+      ];
+      return {
+        content: [{ type: "text", text: JSON.stringify({ ticket_id, count: attachments.length, attachments }, null, 2) }]
+      };
+    }
+  );
+  server.registerTool(
+    "download_attachment",
+    {
+      title: "Download Attachment",
+      description: "Download a Freshservice attachment by ID, up to 10 MiB. Get IDs from list_ticket_attachments, get_ticket or get_ticket_comments. Uses the authenticated attachment endpoint; access follows the API agent's permissions. Returns text files as embedded text resources, PNG/JPEG/GIF/WebP as images and other files (including PDFs) as base64 embedded resources. No server-side file is written.",
+      inputSchema: { attachment_id: external_exports.number().int().safe().positive() },
+      annotations: { readOnlyHint: true }
+    },
+    async ({ attachment_id }) => {
+      const { data, contentType } = await downloadAttachment(config2, attachment_id);
+      const mimeType = contentType.split(";")[0].trim().toLowerCase();
+      const uri = `https://${config2.domain}/api/v2/attachments/${attachment_id}`;
+      if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType)) {
+        return { content: [{ type: "image", mimeType, data: data.toString("base64") }] };
+      }
+      if (mimeType.startsWith("text/") || /(?:\/|\+)(?:json|xml)$/.test(mimeType)) {
+        const charset = /charset\s*=\s*"?([^;"\s]+)/i.exec(contentType)?.[1] ?? "utf-8";
+        try {
+          const text = new TextDecoder(charset, { fatal: true }).decode(data);
+          return { content: [{ type: "resource", resource: { uri, mimeType, text } }] };
+        } catch {
+        }
+      }
+      return { content: [{ type: "resource", resource: { uri, mimeType, blob: data.toString("base64") } }] };
+    }
+  );
+}
+
+// src/index.ts
 function loadConfig() {
   const domain = process.env.FRESHSERVICE_DOMAIN;
   const apiKey = process.env.FRESHSERVICE_API_KEY;
@@ -22110,6 +22245,7 @@ async function main() {
   });
   registerAgentTools(server, config2);
   registerTicketFieldTools(server, config2);
+  registerAttachmentTools(server, config2);
   if (readonly2) {
     const { registerReadOnlyTicketTools: registerReadOnlyTicketTools2 } = await Promise.resolve().then(() => (init_tickets_readonly(), tickets_readonly_exports));
     const { registerReadOnlyChangeTools: registerReadOnlyChangeTools2 } = await Promise.resolve().then(() => (init_changes_readonly(), changes_readonly_exports));

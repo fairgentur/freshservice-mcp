@@ -86,17 +86,19 @@ export function registerReadOnlyTicketTools(
     "get_ticket",
     {
       title: "Get Ticket",
-      description: "Retrieve full details of a single Freshservice ticket by ID.",
+      description:
+        "Retrieve full details of a single Freshservice ticket by ID, including attachment metadata. " +
+        "Use list_ticket_attachments for files from both the ticket and its conversations.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive(),
-        include: z.string().optional(),
+        include: z.string().optional().describe("Default: requester,stats,ticket_attachments"),
       }),
     },
     async ({ ticket_id, include }) => {
-      const ticket = await getTicket(config, ticket_id, include ?? "requester,stats");
+      const ticket = await getTicket(config, ticket_id, include ?? "requester,stats,ticket_attachments");
       const description =
         ticket.description_text?.trim() ?? stripHtml(ticket.description ?? "");
-      const result = { ...normalizeTicket(ticket), description };
+      const result = { ...normalizeTicket(ticket), description, attachments: ticket.attachments ?? [] };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
@@ -107,7 +109,7 @@ export function registerReadOnlyTicketTools(
     "get_ticket_comments",
     {
       title: "Get Ticket Comments",
-      description: "Retrieve all conversations (replies and notes) for a Freshservice ticket.",
+      description: "Retrieve all conversations (replies and notes), including attachment metadata, for a Freshservice ticket.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive(),
       }),
@@ -124,6 +126,7 @@ export function registerReadOnlyTicketTools(
         user_id: c.user_id ?? null,
         created_at: c.created_at,
         body: c.body_text?.trim() ?? stripHtml(c.body ?? ""),
+        attachments: c.attachments ?? [],
       }));
       return {
         content: [
