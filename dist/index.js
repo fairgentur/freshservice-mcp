@@ -38652,7 +38652,7 @@ async function main() {
   const readonly2 = process.env.FRESHSERVICE_READONLY === "true";
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.4.0"
+    version: "0.5.0"
   }, { maxToolInputElements: 1e4 });
   registerAgentTools(server, config2);
   registerTicketFieldTools(server, config2);
