@@ -52,7 +52,7 @@ async function main() {
 
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.3.0",
+    version: "0.4.0",
   });
 
   // Always register read tools
