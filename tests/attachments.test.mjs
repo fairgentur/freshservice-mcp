@@ -21,6 +21,8 @@ await build({
       'export * from "./src/tools/attachments.js";',
       'export * from "./src/tools/tickets.js";',
       'export * from "./src/tools/tickets-readonly.js";',
+      'export * from "./src/tools/changes.js";',
+      'export * from "./src/tools/changes-readonly.js";',
     ].join("\n"),
     resolveDir: root,
     loader: "ts",
@@ -29,7 +31,7 @@ await build({
   bundle: true,
   packages: "external",
   platform: "node",
-  target: "node18",
+  target: "node22",
   format: "esm",
 });
 const api = await import(pathToFileURL(entry).href);
@@ -60,6 +62,7 @@ function responses(...queue) {
 async function connect(t, readonly = false) {
   const server = new McpServer({ name: "attachment-test", version: "1.0.0" });
   (readonly ? api.registerReadOnlyTicketTools : api.registerTicketTools)(server, config);
+  (readonly ? api.registerReadOnlyChangeTools : api.registerChangeTools)(server, config);
   api.registerAttachmentTools(server, config);
   const client = new Client({ name: "test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -104,7 +107,126 @@ for (const readonly of [false, true]) {
     const result = await client.callTool({ name: "list_ticket_attachments", arguments: { ticket_id: 7 } });
     assert.deepEqual(JSON.parse(result.content[0].text), { ticket_id: 7, count: 0, attachments: [] });
   });
+
+  test(`${mode}: service-request form files are listed when ticket attachments are empty`, async (t) => {
+    const client = await connect(t, readonly);
+    const formFiles = Array.from({ length: 13 }, (_, index) => ({ ...attachment, id: 100 + index, name: `export.${index}` }));
+    const item = { id: 9, service_item_id: 10, service_item_name: "Technical request", attachments: formFiles };
+    const calls = responses(
+      json({ ticket: { ...ticket, type: "Service Request", attachments: [] } }),
+      json({ conversations: [] }),
+      json({ requested_items: [item] })
+    );
+    const result = await client.callTool({ name: "list_ticket_attachments", arguments: { ticket_id: 7 } });
+    const listed = JSON.parse(result.content[0].text);
+    assert.equal(result.isError, undefined);
+    assert.equal(listed.count, 13);
+    assert.deepEqual(listed.attachments.map((a) => a.id), formFiles.map((a) => a.id));
+    assert.deepEqual(listed.attachments[0], {
+      ...formFiles[0], source: "requested_item", conversation_id: null, private: null,
+      requested_item_id: 9, service_item_id: 10, service_item_name: "Technical request",
+    });
+    assert.equal(calls[2].url.pathname, "/api/v2/tickets/7/requested_items");
+    responses(new Response("file contents", { headers: { "Content-Type": "text/plain" } }));
+    const download = await client.callTool({ name: "download_attachment", arguments: { attachment_id: listed.attachments[0].id } });
+    assert.equal(download.content[0].resource.text, "file contents");
+  });
+
+  test(`${mode}: form attachment fields preserve context and deduplicate files`, async (t) => {
+    const client = await connect(t, readonly);
+    const fieldFile = { ...attachment, attachment_url: undefined, canonical_path: "/helpdesk/attachments/42", has_access: true };
+    responses(
+      json({ ticket: { ...ticket, type: "Service Request" } }),
+      json({ conversations: [conversation] }),
+      json({ requested_items: [{ id: 9, attachments: [fieldFile], custom_fields: {
+        documents: [fieldFile], other_document: { ...fieldFile, id: 44 },
+        text: "ordinary content", contacts: [{ id: 12, name: "A contact" }], flag: false,
+      } }] })
+    );
+    const result = await client.callTool({ name: "list_ticket_attachments", arguments: { ticket_id: 7 } });
+    const listed = JSON.parse(result.content[0].text);
+    assert.equal(listed.count, 4);
+    const formFiles = listed.attachments.filter((a) => a.source === "requested_item");
+    assert.equal(formFiles.length, 2);
+    assert.deepEqual(formFiles.map((a) => a.field_name), ["documents", "other_document"]);
+    assert.equal(formFiles[0].requested_item_id, 9);
+    assert.equal(formFiles[0].has_access, true);
+  });
+
+  test(`${mode}: form access failures are reported instead of returning a partial list`, async (t) => {
+    const client = await connect(t, readonly);
+    const calls = responses(json({ ticket: { ...ticket, type: "Service Request" } }), json({ conversations: [] }), new Response("denied", { status: 403 }));
+    const result = await client.callTool({ name: "list_ticket_attachments", arguments: { ticket_id: 7 } });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /403/);
+    assert.equal(calls.length, 3);
+  });
+
+  test(`${mode}: Change query/view validation survives the Zod upgrade`, async (t) => {
+    const client = await connect(t, readonly);
+    const calls = responses();
+    const invalid = await client.callTool({ name: "list_changes", arguments: { query: "status:1", view: "all" } });
+    assert.equal(invalid.isError, true);
+    assert.equal(calls.length, 0);
+    const validCalls = responses(json({ changes: [] }));
+    const valid = await client.callTool({ name: "list_changes", arguments: { query: "status:1" } });
+    assert.equal(valid.isError, undefined);
+    assert.equal(validCalls.length, 1);
+  });
 }
+
+test("requested items follow every page, including child items and omitted arrays", async () => {
+  const first = Array.from({ length: 100 }, (_, id) => ({ id }));
+  const calls = responses(json({ requested_items: first }), json({ requested_items: [{ id: 101, attachments: [attachment] }] }));
+  const items = await api.getTicketRequestedItems(config, 7);
+  assert.equal(items.length, 101);
+  assert.deepEqual(items[100].attachments, [attachment]);
+  assert.equal(calls[0].url.searchParams.get("per_page"), "100");
+  assert.equal(calls[1].url.searchParams.get("page"), "2");
+  responses(json({}));
+  assert.deepEqual(await api.getTicketRequestedItems(config, 7), []);
+});
+
+test("custom field primitive values, null, empty and omitted records keep their semantics", async (t) => {
+  const client = await connect(t);
+  for (const fields of [{ cf_text: "release", cf_number: 3, cf_boolean: false, cf_clear: null }, {}, undefined]) {
+    const calls = responses(json({ ticket }));
+    const args = { ticket_id: 7, ...(fields === undefined ? {} : { custom_fields: fields }) };
+    const result = await client.callTool({ name: "update_ticket", arguments: args });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(JSON.parse(calls[0].options.body), fields === undefined ? {} : { custom_fields: fields });
+  }
+  for (const fields of [{ cf_bad: ["value"] }, { cf_bad: { nested: "value" } }]) {
+    const calls = responses();
+    const result = await client.callTool({ name: "update_ticket", arguments: { ticket_id: 7, custom_fields: fields } });
+    assert.equal(result.isError, true);
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("ordinary create fields and email validation survive the dependency upgrade", async (t) => {
+  const client = await connect(t);
+  const calls = responses(json({ ticket }));
+  const args = { subject: "Example", email: "agent@example.com", cc_emails: ["cc@example.com"], tags: ["example"], custom_fields: { cf_flag: true } };
+  const result = await client.callTool({ name: "create_ticket", arguments: args });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { ...args, priority: 2, status: 2 });
+  const invalidCalls = responses();
+  const invalid = await client.callTool({ name: "create_ticket", arguments: { ...args, email: "invalid" } });
+  assert.equal(invalid.isError, true);
+  assert.equal(invalidCalls.length, 0);
+});
+
+test("the documented 100-ticket Change association remains valid", async (t) => {
+  const client = await connect(t);
+  const ids = Array.from({ length: 100 }, (_, index) => index + 1);
+  const calls = responses(...ids.map((id) => json({ ticket: { ...ticket, id } })));
+  const result = await client.callTool({ name: "associate_tickets_to_change", arguments: { change_id: 9, ticket_ids: ids } });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(JSON.parse(result.content[0].text).associated_ticket_ids, ids);
+  assert.equal(calls.length, 100);
+  assert.ok(calls.every((c) => c.options.method === "PUT" && JSON.parse(c.options.body).change_initiated_by_ticket.display_id === 9));
+});
 
 test("download returns exact bytes and authenticates the fixed API endpoint", async () => {
   const bytes = Buffer.from([0, 255, 128, 1]);
@@ -226,5 +348,8 @@ for (const readonly of [false, true]) {
       assert.equal(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint, true);
     }
     assert.equal(tools.some((tool) => tool.name === "create_ticket"), !readonly);
+    const oversized = await client.callTool({ name: "get_ticket", arguments: { ticket_id: Array.from({ length: 10_001 }, (_, i) => i) } });
+    assert.equal(oversized.isError, true);
+    assert.match(oversized.content[0].text, /maximum of 10000 elements/);
   });
 }

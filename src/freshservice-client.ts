@@ -1,6 +1,6 @@
 /**
  * Freshservice API client.
- * Zero-dependency HTTP wrapper using native fetch (Node.js 18+).
+ * Zero-dependency HTTP wrapper using native fetch (Node.js 22+).
  * Auth: HTTP Basic with "<API_KEY>:X" (Freshservice convention).
  */
 
@@ -14,7 +14,10 @@ export interface FsAttachment {
   name: string;
   content_type: string;
   size: number;
-  attachment_url: string;
+  attachment_url?: string;
+  canonical_url?: string;
+  canonical_path?: string;
+  has_access?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -73,6 +76,14 @@ export interface FsConversation {
   created_at: string;
   attachments?: FsAttachment[];
   [key: string]: unknown;
+}
+
+export interface FsRequestedItem {
+  id: number;
+  service_item_id?: number;
+  service_item_name?: string;
+  attachments?: FsAttachment[];
+  custom_fields?: Record<string, unknown>;
 }
 
 export interface FsChange {
@@ -366,6 +377,24 @@ export async function getTicketConversations(
     const batch = data.conversations ?? [];
     conversations.push(...batch);
     if (batch.length < 100) return conversations;
+  }
+}
+
+/** Service-request form files are not included in the ticket attachment array. */
+export async function getTicketRequestedItems(
+  config: FreshserviceConfig,
+  ticketId: number
+): Promise<FsRequestedItem[]> {
+  const items: FsRequestedItem[] = [];
+  for (let page = 1; ; page++) {
+    const data = await fsGet<{ requested_items: FsRequestedItem[] }>(
+      config,
+      `tickets/${ticketId}/requested_items`,
+      { per_page: "100", page: String(page) }
+    );
+    const batch = data.requested_items ?? [];
+    items.push(...batch);
+    if (batch.length < 100) return items;
   }
 }
 
