@@ -6,7 +6,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck – suppress "type instantiation excessively deep" from Zod × MCP SDK generics
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v4";
 import {
   type FreshserviceConfig,
   listTickets,
@@ -88,7 +88,7 @@ export function registerReadOnlyTicketTools(
       title: "Get Ticket",
       description:
         "Retrieve full details of a single Freshservice ticket by ID, including attachment metadata. " +
-        "Use list_ticket_attachments for files from both the ticket and its conversations.",
+        "Use list_ticket_attachments for all files, including conversations and service-request forms.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive(),
         include: z.string().optional().describe("Default: requester,stats,ticket_attachments"),

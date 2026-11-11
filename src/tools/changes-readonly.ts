@@ -6,7 +6,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck – suppress "type instantiation excessively deep" from Zod × MCP SDK generics
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v4";
 import {
   type FreshserviceConfig,
   listChanges,

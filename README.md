@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/freshservice-mcp)](https://www.npmjs.com/package/freshservice-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/freshservice-mcp)](https://www.npmjs.com/package/freshservice-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Freshservice](https://freshservice.com). Manage your ITSM tickets, changes, conversations, and agents directly from any MCP-compatible AI client (Kiro, Claude Desktop, Cursor, etc.).
 
@@ -12,7 +12,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Fr
 - 📋 **List tickets** — powerful filter queries or built-in presets
 - 🔍 **Get ticket details** — full description, stats, and metadata
 - 💬 **Read conversations** — all replies and internal notes
-- 📎 **Retrieve attachments** — list ticket and conversation files, download their contents
+- 📎 **Retrieve attachments** — list ticket, conversation and service-request form files, download their contents
 - ✏️ **Create tickets** — with full field support
 - 🔄 **Update tickets** — status, priority, assignment, tags
 - 🧩 **Custom fields** — discover instance-specific ticket fields and read/write them
@@ -83,7 +83,7 @@ Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mo
 | `list_tickets` | List tickets with filter query or built-in preset |
 | `get_ticket` | Get full details of a single ticket |
 | `get_ticket_comments` | Get all conversations for a ticket |
-| `list_ticket_attachments` | List files from a ticket and all its conversations, with source context |
+| `list_ticket_attachments` | List files from a ticket, all its conversations and service-request forms, with source context |
 | `download_attachment` | Download file contents by attachment ID (up to 10 MiB) |
 | `create_ticket` | Create a new ticket |
 | `update_ticket` | Update ticket fields |
@@ -227,9 +227,18 @@ Then pass them to `create_ticket` or `update_ticket`:
 `get_ticket_comments` returns attachment metadata on each conversation and follows all pages.
 For a combined list, call `list_ticket_attachments` with `ticket_id`. Each entry contains the
 metadata supplied by Freshservice (ID, name, content type, size, attachment URL and dates),
-plus `source` (`ticket` or `conversation`), `conversation_id` and `private` (null for ticket files).
-This covers the ticket's attachment array and conversation attachment arrays; inline HTML images
-and service-item custom fields are not extracted. All attachment tools work in read-only mode.
+plus `source` (`ticket`, `conversation` or `requested_item`), `conversation_id` and `private`
+(null for ticket and requested-item files). For service requests, the list also reads all pages
+of [`requested_items`](https://api.freshservice.com/#view_requested_items), including their
+top-level attachments and attachment-valued custom fields. These entries include
+`requested_item_id`, `service_item_id`, `service_item_name` and, where applicable, `field_name`.
+Files repeated in an item's main array and attachment field are listed once. Incidents do not
+call the service-request endpoint. A failure to read requested items is reported as an error,
+so an incomplete list cannot be mistaken for an empty one.
+
+An empty `get_ticket.attachments` array does not rule out files on a service-request form;
+use `list_ticket_attachments` for the complete list. Inline HTML images are not extracted.
+All attachment tools work in read-only mode.
 
 ```
 List the attachments on ticket #12345, then download the log file and the screenshot.
@@ -275,8 +284,15 @@ npm install
 npm run build
 ```
 
-Run `npm run typecheck` and `npm test` to check types and the attachment regression tests.
+Node.js 22 or newer is required; use a maintained LTS release (24 or 26 recommended).
+The patched dependency tree includes an HTTP adapter requiring Node.js 20+, so Node.js 18
+is no longer supported. CI covers Node.js 22, 24 and 26.
+
+Run `npm run typecheck`, `npm test` and `npm audit` to check types, regression tests and dependencies.
 The tests use mock HTTP responses and MCP clients; no Freshservice credentials are needed.
+Release publishing repeats the typecheck, build and tests and checks production dependencies
+for high/critical advisories. Tool arguments have a total ceiling of 10,000 object keys and
+array elements before schema validation.
 
 Then point your MCP client at the local build:
 
@@ -295,17 +311,17 @@ Then point your MCP client at the local build:
 }
 ```
 
-> **Note:** `dist/index.js` is a self-contained esbuild bundle with all dependencies inlined. No `npm install` needed at runtime — just Node.js 18+.
+> **Note:** `dist/index.js` is a self-contained esbuild bundle with all dependencies inlined. No `npm install` needed at runtime — just Node.js 22+.
 
 ### Standalone file deployment
 
-If you don't want to clone the repo, just grab `dist/index.js` — it's a single 750KB file that runs standalone with `node`. No package manager required.
+If you don't want to clone the repo, just grab `dist/index.js` — it's a single file that runs standalone with `node`. No package manager required.
 
 ## Troubleshooting
 
 ### Server won't start
 
-1. Verify Node.js 18+: `node --version`
+1. Verify Node.js 22+: `node --version`
 2. Check environment variables are set correctly
 3. Test manually: `FRESHSERVICE_DOMAIN=yourcompany.freshservice.com FRESHSERVICE_API_KEY=yourkey node dist/index.js`
 

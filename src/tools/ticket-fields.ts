@@ -6,7 +6,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck – suppress "type instantiation excessively deep" from Zod × MCP SDK generics
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v4";
 import {
   type FreshserviceConfig,
   type FsTicketField,
@@ -15,7 +15,7 @@ import {
 
 /** Input schema for `custom_fields` on create_ticket / update_ticket. */
 export const customFieldsSchema = z
-  .record(z.union([z.string(), z.number(), z.boolean(), z.null()]))
+  .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
   .optional()
   .describe(
     "Instance-specific custom fields, keyed by their internal name, e.g. " +
