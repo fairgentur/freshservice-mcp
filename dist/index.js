@@ -27771,6 +27771,45 @@ async function listTicketFields(config2) {
   );
   return data.ticket_fields ?? [];
 }
+async function listServiceCatalogItems(config2, options = {}) {
+  const limit = options.limit ?? 100;
+  const items = [];
+  const perPage = 30;
+  const params = { per_page: String(perPage) };
+  if (options.category_id !== void 0) params.category_id = String(options.category_id);
+  const search = options.search?.trim().toLowerCase();
+  for (let page = options.page ?? 1; items.length < limit; page++) {
+    params.page = String(page);
+    const data = await fsGet(
+      config2,
+      "service_catalog/items",
+      params
+    );
+    const batch = data.service_items ?? [];
+    for (const item of batch) {
+      if (search && !item.name.toLowerCase().includes(search)) continue;
+      items.push(item);
+      if (items.length >= limit) break;
+    }
+    if (batch.length < perPage) break;
+  }
+  return items;
+}
+async function getServiceCatalogItem(config2, displayId) {
+  const data = await fsGet(
+    config2,
+    `service_catalog/items/${displayId}`
+  );
+  return data.service_item;
+}
+async function placeServiceRequest(config2, displayId, payload = {}) {
+  const data = await fsPost(
+    config2,
+    `service_catalog/items/${displayId}/place_request`,
+    { ...payload, quantity: payload.quantity ?? 1 }
+  );
+  return data.service_request;
+}
 async function getTicketConversations(config2, ticketId) {
   const conversations = [];
   for (let page = 1; ; page++) {
@@ -28054,7 +28093,7 @@ function normalizeField(f) {
     label: f.label,
     field_type: f.field_type,
     custom: !f.default_field,
-    // Ticket fields report required_for_agents; `required` is only a fallback.
+    // Ticket fields report required_for_agents; catalog fields use required.
     required: f.required_for_agents ?? f.required ?? false,
     required_for_closure: f.required_for_closure ?? false,
     ...f.description ? { description: f.description } : {},
@@ -38020,7 +38059,7 @@ function statusLabel(status, statusMap) {
 function priorityLabel(priority) {
   return PRIORITY_MAP[priority] ?? String(priority);
 }
-function normalizeTicket(t, statusMap) {
+function normalizeTicket(t, statusMap, domain2) {
   return {
     id: t.id,
     subject: t.subject,
@@ -38035,7 +38074,7 @@ function normalizeTicket(t, statusMap) {
     updated_at: t.updated_at,
     due_by: t.due_by ?? null,
     custom_fields: nonEmptyCustomFields(t.custom_fields),
-    url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/tickets/${t.id}`
+    url: `https://${domain2}/helpdesk/tickets/${t.id}`
   };
 }
 function registerTicketTools(server, config2) {
@@ -38058,7 +38097,7 @@ function registerTicketTools(server, config2) {
       if (tickets.length === 0) {
         return { content: [{ type: "text", text: "No tickets found." }] };
       }
-      const normalized = tickets.map((t) => normalizeTicket(t, DEFAULT_STATUS_MAP));
+      const normalized = tickets.map((t) => normalizeTicket(t, DEFAULT_STATUS_MAP, config2.domain));
       return {
         content: [
           {
@@ -38085,7 +38124,7 @@ function registerTicketTools(server, config2) {
       const ticket = await getTicket(config2, ticket_id, include ?? "requester,stats,ticket_attachments");
       const description = ticket.description_text?.trim() ?? stripHtml(ticket.description ?? "");
       const result = {
-        ...normalizeTicket(ticket, DEFAULT_STATUS_MAP),
+        ...normalizeTicket(ticket, DEFAULT_STATUS_MAP, config2.domain),
         description,
         attachments: ticket.attachments ?? []
       };
@@ -38135,7 +38174,7 @@ function registerTicketTools(server, config2) {
     "create_ticket",
     {
       title: "Create Ticket",
-      description: "Create a new Freshservice ticket. Either `email` or `requester_id` must be provided.",
+      description: "Create a new Freshservice ticket. Either `email` or `requester_id` must be provided. For ticket types routed through a service catalog item, use place_service_request after get_service_catalog_item to use the item's form, workflow and routing.",
       inputSchema: external_exports.object({
         subject: external_exports.string().min(1).describe("Ticket subject / title"),
         description: external_exports.string().optional().describe(`Ticket description. ${HTML_FIELD_HINT}`),
@@ -38172,7 +38211,7 @@ function registerTicketTools(server, config2) {
         cc_emails,
         custom_fields
       });
-      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
+      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP, config2.domain);
       return {
         content: [
           {
@@ -38189,7 +38228,7 @@ ${JSON.stringify(result, null, 2)}`
     "update_ticket",
     {
       title: "Update Ticket",
-      description: "Update fields of an existing Freshservice ticket. Only provided fields are changed.",
+      description: "Update fields of an existing Freshservice ticket, including Service Request tickets. Only provided fields are changed. Use the ticket id returned by place_service_request to set tags, priority or group_id afterwards. custom_fields here are ticket form fields, not the catalog item's requested-item form fields.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive().describe("Freshservice ticket ID"),
         subject: external_exports.string().optional().describe("New subject"),
@@ -38215,7 +38254,7 @@ ${JSON.stringify(result, null, 2)}`
       if (type !== void 0) payload.type = type;
       if (custom_fields !== void 0) payload.custom_fields = custom_fields;
       const ticket = await updateTicket(config2, ticket_id, payload);
-      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
+      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP, config2.domain);
       return {
         content: [
           {
@@ -38635,6 +38674,97 @@ function registerAttachmentTools(server, config2) {
   );
 }
 
+// src/tools/service-catalog.ts
+init_v4();
+init_freshservice_client();
+init_ticket_fields();
+function registerServiceCatalogTools(server, config2, readonly2 = false) {
+  const listShape = {
+    category_id: external_exports.number().int().positive().optional().describe("Filter by service category ID"),
+    search: external_exports.string().optional().describe("Case-insensitive substring of the item name; filtered locally across pages"),
+    limit: external_exports.number().int().min(1).max(500).optional().describe("Maximum matching items to return (default: 100)"),
+    page: external_exports.number().int().positive().optional().describe("First page to read (default: 1); the API returns at most 30 items per page")
+  };
+  server.registerTool(
+    "list_service_catalog_items",
+    {
+      title: "List Service Catalog Items",
+      description: "List Freshservice service catalog items, optionally filtered by category and name. Follows pages until the matching limit or the end of the catalog. Returns display_id, name, category (category ID), short_description and visibility (1=draft, 2=published). Call get_service_catalog_item with an item's display_id to inspect its request form.",
+      inputSchema: listShape,
+      annotations: { readOnlyHint: true }
+    },
+    async (options) => {
+      const items = await listServiceCatalogItems(config2, options);
+      if (items.length === 0) {
+        return { content: [{ type: "text", text: "No service catalog items found." }] };
+      }
+      const service_items = items.map((item) => ({
+        display_id: item.display_id,
+        name: item.name,
+        category: item.category_id ?? null,
+        short_description: item.short_description ?? null,
+        visibility: item.visibility ?? null
+      }));
+      return {
+        content: [{ type: "text", text: JSON.stringify({ count: service_items.length, service_items }, null, 2) }]
+      };
+    }
+  );
+  const getShape = {
+    display_id: external_exports.number().int().positive().describe("Catalog item display_id returned by list_service_catalog_items (not its internal id)")
+  };
+  server.registerTool(
+    "get_service_catalog_item",
+    {
+      title: "Get Service Catalog Item",
+      description: `Get a Freshservice catalog item and its form fields under fields, in the same format as list_ticket_fields: name, label, field_type, required, dropdown choices and nested_fields. Call this before place_service_request. Use each field's exact internal name as a custom_fields key and dropdown choice value as its value; set each nested level under its own name. Required fields must be supplied even when hidden from the requester. For rich-text field values: ${HTML_FIELD_HINT}`,
+      inputSchema: getShape,
+      annotations: { readOnlyHint: true }
+    },
+    async ({ display_id }) => {
+      const { custom_fields, ...item } = await getServiceCatalogItem(config2, display_id);
+      const result = { ...item, fields: (custom_fields ?? []).map(normalizeField) };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+  if (readonly2) return;
+  const requestShape = {
+    display_id: getShape.display_id,
+    quantity: external_exports.number().int().positive().default(1).describe("Quantity requested (default: 1); the item must allow quantities greater than one"),
+    email: external_exports.string().email().optional().describe("Requester email; if omitted, Freshservice uses the authenticated agent"),
+    requested_for: external_exports.string().email().optional().describe("Email of the person on whose behalf the request is made"),
+    custom_fields: customFieldsSchema.describe(
+      "Catalog item form values keyed by the exact internal names from get_service_catalog_item. Call it first to learn required fields, dropdown choice values and nested level names. Pass null to clear a field. For rich-text values: " + HTML_FIELD_HINT
+    )
+  };
+  server.registerTool(
+    "place_service_request",
+    {
+      title: "Place Service Request",
+      description: `Create a Freshservice service request through a catalog item's form, workflow and routing. Use this instead of create_ticket when the organisation routes a ticket type through a catalog item. Call get_service_catalog_item first to learn the required form fields and allowed values. Returns the created ticket id and a normalized ticket. To set tags, priority or group_id afterwards, call update_ticket on the returned id; this tool makes only the place_request call. subject and description are not supported by place_request; the catalog item supplies the subject. For rich-text custom fields: ${HTML_FIELD_HINT}`,
+      inputSchema: requestShape,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+    },
+    async ({ display_id, quantity, email: email3, requested_for, custom_fields }) => {
+      const ticket = await placeServiceRequest(config2, display_id, {
+        quantity,
+        email: email3,
+        requested_for,
+        custom_fields
+      });
+      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP, config2.domain);
+      return {
+        content: [{
+          type: "text",
+          text: `Service request #${ticket.id} created.
+
+${JSON.stringify(result, null, 2)}`
+        }]
+      };
+    }
+  );
+}
+
 // src/index.ts
 function loadConfig() {
   const domain2 = process.env.FRESHSERVICE_DOMAIN;
@@ -38652,11 +38782,12 @@ async function main() {
   const readonly2 = process.env.FRESHSERVICE_READONLY === "true";
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.5.0"
+    version: "0.6.0"
   }, { maxToolInputElements: 1e4 });
   registerAgentTools(server, config2);
   registerTicketFieldTools(server, config2);
   registerAttachmentTools(server, config2);
+  registerServiceCatalogTools(server, config2, readonly2);
   if (readonly2) {
     const { registerReadOnlyTicketTools: registerReadOnlyTicketTools2 } = await Promise.resolve().then(() => (init_tickets_readonly(), tickets_readonly_exports));
     const { registerReadOnlyChangeTools: registerReadOnlyChangeTools2 } = await Promise.resolve().then(() => (init_changes_readonly(), changes_readonly_exports));

@@ -47,7 +47,7 @@ export interface FsTicket {
   [key: string]: unknown;
 }
 
-/** Value accepted for a single custom field on ticket create/update. */
+/** Value accepted for a single custom field on ticket or catalog request writes. */
 export type CustomFieldValue = string | number | boolean | null;
 
 /** A ticket form field as returned by GET /ticket_form_fields. */
@@ -63,6 +63,32 @@ export interface FsTicketField {
   required_for_closure?: boolean;
   choices?: unknown[];
   nested_fields?: unknown[];
+  [key: string]: unknown;
+}
+
+/** A form field in a service catalog item's `custom_fields` array. */
+export interface FsCatalogItemField {
+  id?: number | string;
+  name: string;
+  label: string;
+  description?: string;
+  field_type: string;
+  required?: boolean;
+  choices?: unknown[];
+  nested_fields?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface FsServiceCatalogItem {
+  id: number;
+  display_id: number;
+  name: string;
+  category_id?: number | null;
+  short_description?: string | null;
+  description?: string | null;
+  visibility?: number;
+  allow_quantity?: boolean;
+  custom_fields?: FsCatalogItemField[];
   [key: string]: unknown;
 }
 
@@ -357,6 +383,82 @@ export async function listTicketFields(
     "ticket_form_fields"
   );
   return data.ticket_fields ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Service catalog
+// ---------------------------------------------------------------------------
+
+export interface ListServiceCatalogItemsOptions {
+  category_id?: number;
+  /** Case-insensitive name filter, applied locally across pages. */
+  search?: string;
+  /** Maximum number of matching items to return (default 100). */
+  limit?: number;
+  /** First page to read (1-based). */
+  page?: number;
+}
+
+/** Only documented JSON inputs for the place_request endpoint. */
+export interface PlaceRequestPayload {
+  quantity?: number;
+  email?: string;
+  requested_for?: string;
+  custom_fields?: Record<string, CustomFieldValue>;
+}
+
+export async function listServiceCatalogItems(
+  config: FreshserviceConfig,
+  options: ListServiceCatalogItemsOptions = {}
+): Promise<FsServiceCatalogItem[]> {
+  const limit = options.limit ?? 100;
+  const items: FsServiceCatalogItem[] = [];
+  // Unlike ticket lists, this endpoint allows at most 30 items per page.
+  const perPage = 30;
+  const params: Record<string, string> = { per_page: String(perPage) };
+  if (options.category_id !== undefined) params.category_id = String(options.category_id);
+  const search = options.search?.trim().toLowerCase();
+
+  for (let page = options.page ?? 1; items.length < limit; page++) {
+    params.page = String(page);
+    const data = await fsGet<{ service_items: FsServiceCatalogItem[] }>(
+      config,
+      "service_catalog/items",
+      params
+    );
+    const batch = data.service_items ?? [];
+    for (const item of batch) {
+      if (search && !item.name.toLowerCase().includes(search)) continue;
+      items.push(item);
+      if (items.length >= limit) break;
+    }
+    if (batch.length < perPage) break;
+  }
+  return items;
+}
+
+export async function getServiceCatalogItem(
+  config: FreshserviceConfig,
+  displayId: number
+): Promise<FsServiceCatalogItem> {
+  const data = await fsGet<{ service_item: FsServiceCatalogItem }>(
+    config,
+    `service_catalog/items/${displayId}`
+  );
+  return data.service_item;
+}
+
+export async function placeServiceRequest(
+  config: FreshserviceConfig,
+  displayId: number,
+  payload: PlaceRequestPayload = {}
+): Promise<FsTicket> {
+  const data = await fsPost<{ service_request: FsTicket }>(
+    config,
+    `service_catalog/items/${displayId}/place_request`,
+    { ...payload, quantity: payload.quantity ?? 1 }
+  );
+  return data.service_request;
 }
 
 // ---------------------------------------------------------------------------

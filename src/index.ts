@@ -1,7 +1,7 @@
 /**
  * Freshservice MCP Server
  *
- * Exposes Freshservice ticket, change and agent management as MCP tools.
+ * Exposes Freshservice ticket, service catalog, change and agent management as MCP tools.
  * Transport: stdio (suitable for use as a spawned subprocess).
  *
  * Required environment variables:
@@ -20,6 +20,7 @@ import { registerChangeTools } from "./tools/changes.js";
 import { registerAgentTools } from "./tools/agents.js";
 import { registerTicketFieldTools } from "./tools/ticket-fields.js";
 import { registerAttachmentTools } from "./tools/attachments.js";
+import { registerServiceCatalogTools } from "./tools/service-catalog.js";
 
 // ---------------------------------------------------------------------------
 // Config & validation
@@ -52,13 +53,14 @@ async function main() {
 
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.5.0",
+    version: "0.6.0",
   }, { maxToolInputElements: 10_000 });
 
   // Always register read tools
   registerAgentTools(server, config);
   registerTicketFieldTools(server, config);
   registerAttachmentTools(server, config);
+  registerServiceCatalogTools(server, config, readonly);
 
   // Register ticket and Change tools; if readonly, only read tools are registered
   if (readonly) {

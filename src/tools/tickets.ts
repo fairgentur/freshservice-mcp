@@ -39,9 +39,10 @@ function priorityLabel(priority: number): string {
   return PRIORITY_MAP[priority] ?? String(priority);
 }
 
-function normalizeTicket(
+export function normalizeTicket(
   t: Awaited<ReturnType<typeof getTicket>>,
-  statusMap: Record<number, string>
+  statusMap: Record<number, string>,
+  domain: string
 ) {
   return {
     id: t.id,
@@ -57,7 +58,7 @@ function normalizeTicket(
     updated_at: t.updated_at,
     due_by: t.due_by ?? null,
     custom_fields: nonEmptyCustomFields(t.custom_fields),
-    url: `https://${process.env.FRESHSERVICE_DOMAIN}/helpdesk/tickets/${t.id}`,
+    url: `https://${domain}/helpdesk/tickets/${t.id}`,
   };
 }
 
@@ -106,7 +107,7 @@ export function registerTicketTools(
       if (tickets.length === 0) {
         return { content: [{ type: "text", text: "No tickets found." }] };
       }
-      const normalized = tickets.map((t) => normalizeTicket(t, DEFAULT_STATUS_MAP));
+      const normalized = tickets.map((t) => normalizeTicket(t, DEFAULT_STATUS_MAP, config.domain));
       return {
         content: [
           {
@@ -146,7 +147,7 @@ export function registerTicketTools(
         ticket.description_text?.trim() ??
         stripHtml(ticket.description ?? "");
       const result = {
-        ...normalizeTicket(ticket, DEFAULT_STATUS_MAP),
+        ...normalizeTicket(ticket, DEFAULT_STATUS_MAP, config.domain),
         description,
         attachments: ticket.attachments ?? [],
       };
@@ -206,7 +207,9 @@ export function registerTicketTools(
     {
       title: "Create Ticket",
       description:
-        "Create a new Freshservice ticket. Either `email` or `requester_id` must be provided.",
+        "Create a new Freshservice ticket. Either `email` or `requester_id` must be provided. " +
+        "For ticket types routed through a service catalog item, use place_service_request " +
+        "after get_service_catalog_item to use the item's form, workflow and routing.",
       inputSchema: z.object({
         subject: z.string().min(1).describe("Ticket subject / title"),
         description: z
@@ -283,7 +286,7 @@ export function registerTicketTools(
         cc_emails,
         custom_fields,
       });
-      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
+      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP, config.domain);
       return {
         content: [
           {
@@ -303,7 +306,10 @@ export function registerTicketTools(
     {
       title: "Update Ticket",
       description:
-        "Update fields of an existing Freshservice ticket. Only provided fields are changed.",
+        "Update fields of an existing Freshservice ticket, including Service Request tickets. " +
+        "Only provided fields are changed. Use the ticket id returned by place_service_request " +
+        "to set tags, priority or group_id afterwards. custom_fields here are ticket form " +
+        "fields, not the catalog item's requested-item form fields.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
         subject: z.string().optional().describe("New subject"),
@@ -341,7 +347,7 @@ export function registerTicketTools(
       if (custom_fields !== undefined) payload.custom_fields = custom_fields;
 
       const ticket = await updateTicket(config, ticket_id, payload);
-      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP);
+      const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP, config.domain);
       return {
         content: [
           {

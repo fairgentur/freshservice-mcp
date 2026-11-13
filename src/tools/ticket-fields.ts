@@ -9,11 +9,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
 import {
   type FreshserviceConfig,
+  type FsCatalogItemField,
   type FsTicketField,
   listTicketFields,
 } from "../freshservice-client.js";
 
-/** Input schema for `custom_fields` on create_ticket / update_ticket. */
+/** Shared custom-field values for ticket writes and service catalog requests. */
 export const customFieldsSchema = z
   .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
   .optional()
@@ -67,7 +68,7 @@ function normalizeNestedFields(nested: unknown[] | undefined) {
   });
 }
 
-function normalizeField(f: FsTicketField) {
+export function normalizeField(f: FsTicketField | FsCatalogItemField) {
   const choices = normalizeChoices(f.choices);
   const nestedFields = normalizeNestedFields(f.nested_fields);
   return {
@@ -75,7 +76,7 @@ function normalizeField(f: FsTicketField) {
     label: f.label,
     field_type: f.field_type,
     custom: !f.default_field,
-    // Ticket fields report required_for_agents; `required` is only a fallback.
+    // Ticket fields report required_for_agents; catalog fields use required.
     required: f.required_for_agents ?? f.required ?? false,
     required_for_closure: f.required_for_closure ?? false,
     ...(f.description ? { description: f.description } : {}),
