@@ -265,13 +265,13 @@ multi-value arrays, file uploads and child-item payloads are not supported by th
 Freshservice validation errors retain the field-level `errors` array so missing required
 fields and invalid values can be corrected.
 
-Follow-up `update_ticket` uses [`PUT /api/v2/tickets/{id}`](https://api.freshservice.com/#update_ticket),
+Follow-up `update_ticket` uses [`PUT /api/v2/tickets/{id}`](https://api.freshservice.com/#update_a_ticket),
 which also supports Service Request tickets. Normal permissions, workflows and mandatory
 ticket-field checks still apply; for example, if an empty description is rejected, supply
 a meaningful `description` in the explicit update. Tags replace the existing tag list,
 so include all tags you want to retain. The update's `custom_fields` refer to ticket form
 fields; catalog form values belong to requested items and require Freshservice's separate
-[`requested_items` update API](https://api.freshservice.com/#update_requested_items),
+[`requested_items` update API](https://api.freshservice.com/#update_req_items_of_sr),
 which is not exposed as a write tool here. The list and get catalog tools are available
 in read-only mode; placing requests and updating tickets are not.
 
