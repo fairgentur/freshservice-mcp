@@ -14,6 +14,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Fr
 - 💬 **Read conversations** — all replies and internal notes
 - 📎 **Retrieve attachments** — list ticket, conversation and service-request form files, download their contents
 - ✏️ **Create tickets** — with full field support
+- 🛒 **Service catalog requests** — discover catalog items and forms, then request through their workflow and routing
 - 🔄 **Update tickets** — status, priority, assignment, tags
 - 🧩 **Custom fields** — discover instance-specific ticket fields and read/write them
 - 📝 **Add notes or replies** — private notes or public replies
@@ -74,7 +75,7 @@ Reconnect MCP servers (or reload the window). You should now have access to all 
 
 ### Read-only mode
 
-Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mode, only ticket, Change, and agent read tools are registered; all create, update, association, note, and reply tools are omitted. Recommended for shared environments or autonomous agent setups against production instances.
+Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mode, only ticket, service catalog, Change, and agent read tools are registered; all create, update, association, note, and reply tools are omitted, including `place_service_request`. Recommended for shared environments or autonomous agent setups against production instances.
 
 ## Available Tools
 
@@ -89,6 +90,9 @@ Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mo
 | `update_ticket` | Update ticket fields |
 | `add_ticket_note` | Add a private note or public reply |
 | `list_ticket_fields` | List ticket form fields with internal names, types and dropdown choices |
+| `list_service_catalog_items` | List catalog items, optionally filter by category and name |
+| `get_service_catalog_item` | Get a catalog item and its form fields with internal names, required flags and choices |
+| `place_service_request` | Create a service request through a catalog item's form, workflow and routing |
 | `list_changes` | List Changes with query/view filters, sorting, and pagination |
 | `get_change` | Get full details of a Change |
 | `create_change` | Create a Change |
@@ -220,6 +224,56 @@ Then pass them to `create_ticket` or `update_ticket`:
 - A nested (dependent) dropdown lists its lower levels under `nested_fields`; set each level under its own `name`.
 - `required` reflects whether the field is mandatory for agents.
 - `get_ticket` and `list_tickets` return a ticket's non-empty custom fields under `custom_fields`.
+
+## Service Catalog
+
+Use `place_service_request` when your organisation routes a ticket type through a catalog
+item. Creating a plain ticket with `create_ticket`, even with `type: "Service Request"`,
+bypasses the catalog item's form, workflow and routing.
+
+Example flow for an instance at `yourcompany.freshservice.com`:
+
+1. Call `list_service_catalog_items` with `search: "Equipment"` to find an item.
+   It returns compact entries with `display_id`, `name`, `category` (the category ID),
+   `short_description` and `visibility` (`1` = draft, `2` = published). You can filter by
+   `category_id`, set `limit` (default 100, maximum 500), or start at a particular `page`.
+   The list endpoint has no name filter, so search matches names locally, ignoring case,
+   across pages of at most 30 items until the matching limit or the end of the catalog.
+   Listing uses the primary workspace, as Freshservice does by default.
+2. Call `get_service_catalog_item` with the chosen `display_id` (not its internal `id`).
+   The returned `fields` use the same shape as `list_ticket_fields`: internal `name`,
+   `label`, `field_type`, `required`, dropdown `choices` and `nested_fields` for lower levels.
+3. Call `place_service_request` with that `display_id`, `email: "requester@example.com"`
+   and a `custom_fields` object using the exact names and choice values returned in step 2.
+   Set each nested level under its own name. Supply required fields even if hidden from
+   requesters. `quantity` defaults to 1; `email` is optional (defaults to the authenticated
+   agent), and `requested_for` optionally specifies another person's email.
+4. Optionally call `update_ticket` with the returned ticket `id` to set `priority: "3"`
+   (High), `tags: ["example"]` or a `group_id` discovered via `list_ticket_fields` with
+   `include_default: true`. The `place_service_request` result starts with
+   `Service request #<id> created.` and includes the same normalized ticket fields and URL
+   as `create_ticket`.
+
+The supported request fields follow Freshservice's
+[`place_request` documentation](https://api.freshservice.com/#create_service_request).
+`subject`, `description`, tags, priority and group are not inputs to this endpoint.
+The catalog item supplies the subject. `place_service_request` performs a single POST;
+it makes no automatic ticket updates. For rich-text custom fields, send raw HTML tags
+such as `<p>Details</p>`, never escaped markup such as `&lt;p&gt;Details&lt;/p&gt;`.
+Custom-field values support strings, numbers, booleans and `null` to clear a field;
+multi-value arrays, file uploads and child-item payloads are not supported by this tool.
+Freshservice validation errors retain the field-level `errors` array so missing required
+fields and invalid values can be corrected.
+
+Follow-up `update_ticket` uses [`PUT /api/v2/tickets/{id}`](https://api.freshservice.com/#update_a_ticket),
+which also supports Service Request tickets. Normal permissions, workflows and mandatory
+ticket-field checks still apply; for example, if an empty description is rejected, supply
+a meaningful `description` in the explicit update. Tags replace the existing tag list,
+so include all tags you want to retain. The update's `custom_fields` refer to ticket form
+fields; catalog form values belong to requested items and require Freshservice's separate
+[`requested_items` update API](https://api.freshservice.com/#update_req_items_of_sr),
+which is not exposed as a write tool here. The list and get catalog tools are available
+in read-only mode; placing requests and updating tickets are not.
 
 ## Attachments
 
