@@ -151,6 +151,7 @@ test("place request authenticates one POST and preserves form values, raw HTML a
   assert.deepEqual(normalized, {
     id: 11, subject: ticket.subject, status: "Open", priority: "Medium", type: "Service Request",
     requester: 21, responder_id: null, group_id: 9, tags: [], created_at: ticket.created_at,
+    category: null, sub_category: null, item_category: null,
     updated_at: ticket.updated_at, due_by: null, custom_fields: { cf_example_text: "Kept" },
     url: `${origin}/helpdesk/tickets/11`,
   });
@@ -344,7 +345,7 @@ for (const readonly of [false, true]) {
     });
     t.after(() => client.close());
     await client.connect(transport);
-    assert.equal(client.getServerVersion().version, "0.6.0");
+    assert.equal(client.getServerVersion().version, "0.6.1");
     const { tools } = await client.listTools();
     for (const name of ["list_service_catalog_items", "get_service_catalog_item"]) {
       assert.equal(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint, true);

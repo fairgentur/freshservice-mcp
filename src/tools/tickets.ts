@@ -31,6 +31,19 @@ export const HTML_FIELD_HINT =
   "renders as the literal text \"<p>\" instead of a paragraph. Use entities only " +
   "for characters that must appear literally in the content.";
 
+const ticketCategoryFields = {
+  category: z.string().optional().describe(
+    "Instance-specific ticket category, sent as a top-level field. Call list_ticket_fields " +
+    "with include_default: true to discover required fields and allowed values; Freshservice validates the value."
+  ),
+  sub_category: z.string().optional().describe(
+    "Instance-specific ticket sub-category under category, sent as a top-level field. Freshservice validates the value."
+  ),
+  item_category: z.string().optional().describe(
+    "Instance-specific ticket item category under sub_category, sent as a top-level field. Freshservice validates the value."
+  ),
+};
+
 function statusLabel(status: number, statusMap: Record<number, string>): string {
   return statusMap[status] ?? String(status);
 }
@@ -53,6 +66,9 @@ export function normalizeTicket(
     requester: t.requester?.name ?? t.requester?.email ?? t.requester_id ?? null,
     responder_id: t.responder_id ?? null,
     group_id: t.group_id ?? null,
+    category: t.category ?? null,
+    sub_category: t.sub_category ?? null,
+    item_category: t.item_category ?? null,
     tags: t.tags ?? [],
     created_at: t.created_at,
     updated_at: t.updated_at,
@@ -128,7 +144,8 @@ export function registerTicketTools(
       title: "Get Ticket",
       description:
         "Retrieve full details of a single Freshservice ticket by ID, " +
-        "including description, status, priority, requester, stats and attachment metadata. " +
+        "including description, category, sub_category, item_category, group_id, status, " +
+        "priority, requester, stats and attachment metadata. " +
         "Use list_ticket_attachments for all files, including conversations and service-request forms.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
@@ -250,18 +267,7 @@ export function registerTicketTools(
           .describe("Agent ID to assign to"),
         tags: z.array(z.string()).optional().describe("List of tags"),
         type: z.string().optional().describe("Ticket type, e.g. Incident, Service Request"),
-        category: z
-          .string()
-          .optional()
-          .describe(
-            "Ticket category. Required on Freshservice instances where the category field is " +
-              "mandatory (create_ticket fails with a 400 validation error listing the allowed " +
-              "values if omitted on such instances)."
-          ),
-        sub_category: z
-          .string()
-          .optional()
-          .describe("Ticket sub-category. Only meaningful together with `category`."),
+        ...ticketCategoryFields,
         cc_emails: z
           .array(z.string().email())
           .optional()
@@ -269,7 +275,7 @@ export function registerTicketTools(
         custom_fields: customFieldsSchema,
       }),
     },
-    async ({ subject, description, email, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails, custom_fields }) => {
+    async ({ subject, description, email, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, item_category, cc_emails, custom_fields }) => {
       const ticket = await createTicket(config, {
         subject,
         description,
@@ -283,6 +289,7 @@ export function registerTicketTools(
         type,
         category,
         sub_category,
+        item_category,
         cc_emails,
         custom_fields,
       });
@@ -307,7 +314,13 @@ export function registerTicketTools(
       title: "Update Ticket",
       description:
         "Update fields of an existing Freshservice ticket, including Service Request tickets. " +
-        "Only provided fields are changed. Use the ticket id returned by place_service_request " +
+        "Only provided fields are changed, but Freshservice re-validates ALL mandatory fields " +
+        "on every update, including fields not sent. Tickets created from a service catalog item " +
+        "usually have an empty description and no category. Check get_ticket and " +
+        "list_ticket_fields with include_default: true, then include missing required description, " +
+        "category, sub_category and item_category with the intended changes in the same call. " +
+        "Category fields are top-level strings with instance-specific values. " +
+        "Use the ticket id returned by place_service_request " +
         "to set tags, priority or group_id afterwards. custom_fields here are ticket form " +
         "fields, not the catalog item's requested-item form fields.",
       inputSchema: z.object({
@@ -330,10 +343,11 @@ export function registerTicketTools(
         responder_id: z.number().int().positive().optional().describe("Assigned agent ID"),
         tags: z.array(z.string()).optional().describe("New tag list (replaces existing)"),
         type: z.string().optional().describe("Ticket type"),
+        ...ticketCategoryFields,
         custom_fields: customFieldsSchema,
       }),
     },
-    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type, custom_fields }) => {
+    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type, category, sub_category, item_category, custom_fields }) => {
       const payload: Record<string, unknown> = {};
       if (subject !== undefined) payload.subject = subject;
       if (description !== undefined) payload.description = description;
@@ -343,6 +357,9 @@ export function registerTicketTools(
       if (responder_id !== undefined) payload.responder_id = responder_id;
       if (tags !== undefined) payload.tags = tags;
       if (type !== undefined) payload.type = type;
+      if (category !== undefined) payload.category = category;
+      if (sub_category !== undefined) payload.sub_category = sub_category;
+      if (item_category !== undefined) payload.item_category = item_category;
       // Only the given keys are sent; other custom fields keep their values.
       if (custom_fields !== undefined) payload.custom_fields = custom_fields;
 

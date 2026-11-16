@@ -27697,8 +27697,22 @@ async function fsRequest(config2, method, path, params = {}, body) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    let details = text.slice(0, 2e3);
+    let hint = "";
+    if (res.status === 400) {
+      try {
+        const validation = JSON.parse(text);
+        if (Array.isArray(validation?.errors)) {
+          details = text;
+          if (method === "PUT" && /^tickets\/\d+$/.test(path)) {
+            hint = "\nFreshservice validates all mandatory fields on update; include the listed fields in the same call.";
+          }
+        }
+      } catch {
+      }
+    }
     throw new Error(
-      `Freshservice API ${method} ${path} \u2192 ${res.status}: ${text.slice(0, 2e3)}`
+      `Freshservice API ${method} ${path} \u2192 ${res.status}: ${details}${hint}`
     );
   }
   if (res.status === 204) return void 0;
@@ -28162,6 +28176,9 @@ function normalizeTicket2(t) {
     requester: t.requester?.name ?? t.requester?.email ?? t.requester_id ?? null,
     responder_id: t.responder_id ?? null,
     group_id: t.group_id ?? null,
+    category: t.category ?? null,
+    sub_category: t.sub_category ?? null,
+    item_category: t.item_category ?? null,
     tags: t.tags ?? [],
     created_at: t.created_at,
     updated_at: t.updated_at,
@@ -28203,7 +28220,7 @@ function registerReadOnlyTicketTools(server, config2) {
     "get_ticket",
     {
       title: "Get Ticket",
-      description: "Retrieve full details of a single Freshservice ticket by ID, including attachment metadata. Use list_ticket_attachments for all files, including conversations and service-request forms.",
+      description: "Retrieve full details of a single Freshservice ticket by ID, including description, category, sub_category, item_category, group_id and attachment metadata. Use list_ticket_attachments for all files, including conversations and service-request forms.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive(),
         include: external_exports.string().optional().describe("Default: requester,stats,ticket_attachments")
@@ -38053,6 +38070,17 @@ init_v4();
 init_freshservice_client();
 init_ticket_fields();
 var HTML_FIELD_HINT = 'HTML is supported \u2014 pass RAW tags (<p>, <b>, <ul>, <li>, <code>). Do NOT HTML-escape the markup: the value is stored verbatim, so &lt;p&gt; renders as the literal text "<p>" instead of a paragraph. Use entities only for characters that must appear literally in the content.';
+var ticketCategoryFields = {
+  category: external_exports.string().optional().describe(
+    "Instance-specific ticket category, sent as a top-level field. Call list_ticket_fields with include_default: true to discover required fields and allowed values; Freshservice validates the value."
+  ),
+  sub_category: external_exports.string().optional().describe(
+    "Instance-specific ticket sub-category under category, sent as a top-level field. Freshservice validates the value."
+  ),
+  item_category: external_exports.string().optional().describe(
+    "Instance-specific ticket item category under sub_category, sent as a top-level field. Freshservice validates the value."
+  )
+};
 function statusLabel(status, statusMap) {
   return statusMap[status] ?? String(status);
 }
@@ -38069,6 +38097,9 @@ function normalizeTicket(t, statusMap, domain2) {
     requester: t.requester?.name ?? t.requester?.email ?? t.requester_id ?? null,
     responder_id: t.responder_id ?? null,
     group_id: t.group_id ?? null,
+    category: t.category ?? null,
+    sub_category: t.sub_category ?? null,
+    item_category: t.item_category ?? null,
     tags: t.tags ?? [],
     created_at: t.created_at,
     updated_at: t.updated_at,
@@ -38112,7 +38143,7 @@ function registerTicketTools(server, config2) {
     "get_ticket",
     {
       title: "Get Ticket",
-      description: "Retrieve full details of a single Freshservice ticket by ID, including description, status, priority, requester, stats and attachment metadata. Use list_ticket_attachments for all files, including conversations and service-request forms.",
+      description: "Retrieve full details of a single Freshservice ticket by ID, including description, category, sub_category, item_category, group_id, status, priority, requester, stats and attachment metadata. Use list_ticket_attachments for all files, including conversations and service-request forms.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive().describe("Freshservice ticket ID"),
         include: external_exports.string().optional().describe(
@@ -38186,15 +38217,12 @@ function registerTicketTools(server, config2) {
         responder_id: external_exports.number().int().positive().optional().describe("Agent ID to assign to"),
         tags: external_exports.array(external_exports.string()).optional().describe("List of tags"),
         type: external_exports.string().optional().describe("Ticket type, e.g. Incident, Service Request"),
-        category: external_exports.string().optional().describe(
-          "Ticket category. Required on Freshservice instances where the category field is mandatory (create_ticket fails with a 400 validation error listing the allowed values if omitted on such instances)."
-        ),
-        sub_category: external_exports.string().optional().describe("Ticket sub-category. Only meaningful together with `category`."),
+        ...ticketCategoryFields,
         cc_emails: external_exports.array(external_exports.string().email()).optional().describe("CC email addresses"),
         custom_fields: customFieldsSchema
       })
     },
-    async ({ subject, description, email: email3, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, cc_emails, custom_fields }) => {
+    async ({ subject, description, email: email3, requester_id, priority, status, group_id, responder_id, tags, type, category, sub_category, item_category, cc_emails, custom_fields }) => {
       const ticket = await createTicket(config2, {
         subject,
         description,
@@ -38208,6 +38236,7 @@ function registerTicketTools(server, config2) {
         type,
         category,
         sub_category,
+        item_category,
         cc_emails,
         custom_fields
       });
@@ -38228,7 +38257,7 @@ ${JSON.stringify(result, null, 2)}`
     "update_ticket",
     {
       title: "Update Ticket",
-      description: "Update fields of an existing Freshservice ticket, including Service Request tickets. Only provided fields are changed. Use the ticket id returned by place_service_request to set tags, priority or group_id afterwards. custom_fields here are ticket form fields, not the catalog item's requested-item form fields.",
+      description: "Update fields of an existing Freshservice ticket, including Service Request tickets. Only provided fields are changed, but Freshservice re-validates ALL mandatory fields on every update, including fields not sent. Tickets created from a service catalog item usually have an empty description and no category. Check get_ticket and list_ticket_fields with include_default: true, then include missing required description, category, sub_category and item_category with the intended changes in the same call. Category fields are top-level strings with instance-specific values. Use the ticket id returned by place_service_request to set tags, priority or group_id afterwards. custom_fields here are ticket form fields, not the catalog item's requested-item form fields.",
       inputSchema: external_exports.object({
         ticket_id: external_exports.number().int().positive().describe("Freshservice ticket ID"),
         subject: external_exports.string().optional().describe("New subject"),
@@ -38239,10 +38268,11 @@ ${JSON.stringify(result, null, 2)}`
         responder_id: external_exports.number().int().positive().optional().describe("Assigned agent ID"),
         tags: external_exports.array(external_exports.string()).optional().describe("New tag list (replaces existing)"),
         type: external_exports.string().optional().describe("Ticket type"),
+        ...ticketCategoryFields,
         custom_fields: customFieldsSchema
       })
     },
-    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type, custom_fields }) => {
+    async ({ ticket_id, subject, description, priority, status, group_id, responder_id, tags, type, category, sub_category, item_category, custom_fields }) => {
       const payload = {};
       if (subject !== void 0) payload.subject = subject;
       if (description !== void 0) payload.description = description;
@@ -38252,6 +38282,9 @@ ${JSON.stringify(result, null, 2)}`
       if (responder_id !== void 0) payload.responder_id = responder_id;
       if (tags !== void 0) payload.tags = tags;
       if (type !== void 0) payload.type = type;
+      if (category !== void 0) payload.category = category;
+      if (sub_category !== void 0) payload.sub_category = sub_category;
+      if (item_category !== void 0) payload.item_category = item_category;
       if (custom_fields !== void 0) payload.custom_fields = custom_fields;
       const ticket = await updateTicket(config2, ticket_id, payload);
       const result = normalizeTicket(ticket, DEFAULT_STATUS_MAP, config2.domain);
@@ -38782,7 +38815,7 @@ async function main() {
   const readonly2 = process.env.FRESHSERVICE_READONLY === "true";
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.6.0"
+    version: "0.6.1"
   }, { maxToolInputElements: 1e4 });
   registerAgentTools(server, config2);
   registerTicketFieldTools(server, config2);
