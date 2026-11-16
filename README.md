@@ -203,7 +203,51 @@ Useful optional fields:
 - `group_id` — route to a team
 - `responder_id` — assign directly to an agent
 - `tags` — categorization
+- `category`, `sub_category`, `item_category` — instance-specific category values, sent
+  as top-level ticket fields
 - `custom_fields` — instance-specific fields (see below)
+
+## Updating Tickets
+
+`update_ticket` accepts optional `category`, `sub_category` and `item_category` strings,
+just like `create_ticket`. These are top-level ticket fields, separate from `custom_fields`.
+Values are passed through unchanged; allowed values depend on your instance and are
+validated by Freshservice. Call `list_ticket_fields` with `include_default: true` to inspect
+required default fields and their choices. Category levels use the corresponding choice
+values, not choice IDs.
+
+Freshservice validates the whole ticket on every update, including mandatory fields you
+did not send. A change to only a subject or tags can therefore fail when description or
+category is empty. Tickets created through a catalog item usually have an empty description
+and no category. Before updating, call `get_ticket`: it returns `description`, `category`,
+`sub_category`, `item_category` and `group_id`, including in read-only mode. Missing or null
+category fields are returned as `null`; empty strings remain visible as empty strings.
+
+Include missing required fields and the intended changes in the same `update_ticket` call.
+Replace the example ticket ID and category placeholders with the ticket and values from
+your instance:
+
+```json
+{
+  "ticket_id": 12345,
+  "subject": "Example request",
+  "description": "<p>Example request details</p>",
+  "category": "<category value>",
+  "sub_category": "<sub-category value>",
+  "item_category": "<item-category value>",
+  "tags": ["example"]
+}
+```
+
+Omitted category fields are not sent. On a 400 validation response, the tool error retains
+the API's complete `errors[]` array, including each `field`, `message` and `code`, without
+truncating long choice lists or later errors. Ticket update validation errors append this
+hint once:
+
+> Freshservice validates all mandatory fields on update; include the listed fields in the same call.
+
+Review all returned errors and include the listed fields in the same retry. The server
+does not fill in default category values or automatically retry `update_ticket`.
 
 ## Custom Fields
 
@@ -267,8 +311,9 @@ fields and invalid values can be corrected.
 
 Follow-up `update_ticket` uses [`PUT /api/v2/tickets/{id}`](https://api.freshservice.com/#update_a_ticket),
 which also supports Service Request tickets. Normal permissions, workflows and mandatory
-ticket-field checks still apply; for example, if an empty description is rejected, supply
-a meaningful `description` in the explicit update. Tags replace the existing tag list,
+ticket-field checks still apply. Supply a meaningful `description` and any required
+`category`, `sub_category` and `item_category` values in the same explicit update (see
+[Updating Tickets](#updating-tickets)). Tags replace the existing tag list,
 so include all tags you want to retain. The update's `custom_fields` refer to ticket form
 fields; catalog form values belong to requested items and require Freshservice's separate
 [`requested_items` update API](https://api.freshservice.com/#update_req_items_of_sr),

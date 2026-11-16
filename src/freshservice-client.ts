@@ -34,6 +34,9 @@ export interface FsTicket {
   requester_id?: number;
   responder_id?: number;
   group_id?: number;
+  category?: string | null;
+  sub_category?: string | null;
+  item_category?: string | null;
   email?: string;
   cc_emails?: string[];
   tags?: string[];
@@ -192,10 +195,25 @@ async function fsRequest<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    // Keep enough of the body to carry Freshservice's field-level validation
-    // details, e.g. the allowed values listed on a 400 for `category`.
+    let details = text.slice(0, 2000);
+    let hint = "";
+    if (res.status === 400) {
+      try {
+        const validation = JSON.parse(text) as { errors?: unknown } | null;
+        if (Array.isArray(validation?.errors)) {
+          // Choice lists can be long. Keep every validation error verbatim,
+          // including fields beyond the ordinary response preview limit.
+          details = text;
+          if (method === "PUT" && /^tickets\/\d+$/.test(path)) {
+            hint = "\nFreshservice validates all mandatory fields on update; include the listed fields in the same call.";
+          }
+        }
+      } catch {
+        // Non-JSON errors still use the bounded response preview.
+      }
+    }
     throw new Error(
-      `Freshservice API ${method} ${path} → ${res.status}: ${text.slice(0, 2000)}`
+      `Freshservice API ${method} ${path} → ${res.status}: ${details}${hint}`
     );
   }
 
@@ -283,6 +301,7 @@ export interface CreateTicketPayload {
   type?: string;
   category?: string;
   sub_category?: string;
+  item_category?: string;
   custom_fields?: Record<string, CustomFieldValue>;
   [key: string]: unknown;
 }
@@ -296,6 +315,9 @@ export interface UpdateTicketPayload {
   responder_id?: number;
   tags?: string[];
   type?: string;
+  category?: string;
+  sub_category?: string;
+  item_category?: string;
   custom_fields?: Record<string, CustomFieldValue>;
   [key: string]: unknown;
 }

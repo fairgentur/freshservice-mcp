@@ -36,6 +36,9 @@ function normalizeTicket(t: Awaited<ReturnType<typeof getTicket>>) {
     requester: t.requester?.name ?? t.requester?.email ?? t.requester_id ?? null,
     responder_id: t.responder_id ?? null,
     group_id: t.group_id ?? null,
+    category: t.category ?? null,
+    sub_category: t.sub_category ?? null,
+    item_category: t.item_category ?? null,
     tags: t.tags ?? [],
     created_at: t.created_at,
     updated_at: t.updated_at,
@@ -87,7 +90,8 @@ export function registerReadOnlyTicketTools(
     {
       title: "Get Ticket",
       description:
-        "Retrieve full details of a single Freshservice ticket by ID, including attachment metadata. " +
+        "Retrieve full details of a single Freshservice ticket by ID, including description, " +
+        "category, sub_category, item_category, group_id and attachment metadata. " +
         "Use list_ticket_attachments for all files, including conversations and service-request forms.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive(),
