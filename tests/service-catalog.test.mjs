@@ -345,7 +345,7 @@ for (const readonly of [false, true]) {
     });
     t.after(() => client.close());
     await client.connect(transport);
-    assert.equal(client.getServerVersion().version, "0.6.1");
+    assert.equal(client.getServerVersion().version, "0.6.2");
     const { tools } = await client.listTools();
     for (const name of ["list_service_catalog_items", "get_service_catalog_item"]) {
       assert.equal(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint, true);

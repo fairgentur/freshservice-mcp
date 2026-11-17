@@ -4,6 +4,9 @@
  * Auth: HTTP Basic with "<API_KEY>:X" (Freshservice convention).
  */
 
+import { inlineImageData, isInlineImageUrlAllowed } from "./inline-images.js";
+import { Parser } from "htmlparser2";
+
 export interface FreshserviceConfig {
   domain: string; // e.g. "yourcompany.freshservice.com"
   apiKey: string;
@@ -253,18 +256,25 @@ async function fsPut<T>(
 
 export function stripHtml(html: string): string {
   if (!html) return "";
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<li>/gi, "• ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  const text: string[] = [];
+  let hidden = 0;
+  const hiddenTags = new Set(["script", "style", "template"]);
+  const parser = new Parser({
+    onopentag(name) {
+      if (hiddenTags.has(name)) hidden++;
+      if (hidden) return;
+      if (name === "br") text.push("\n");
+      if (name === "li") text.push("• ");
+    },
+    ontext(value) { if (!hidden) text.push(value); },
+    onclosetag(name) {
+      if (hiddenTags.has(name)) { hidden--; return; }
+      if (!hidden && (name === "p" || name === "li")) text.push("\n");
+    },
+  }, { decodeEntities: true });
+  parser.end(html);
+  return text.join("")
+    .replace(/\u00a0/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -538,8 +548,39 @@ export async function downloadAttachment(
   }
 
   const endpoint = new URL(`https://${config.domain}/api/v2/attachments/${attachmentId}`);
+  return downloadFile(config, endpoint, `Freshservice attachment ${attachmentId}`);
+}
+
+/** Download only a source already discovered in a ticket's HTML by the tool. */
+export async function downloadInlineImage(
+  config: FreshserviceConfig,
+  src: string
+): Promise<{ data: Buffer; contentType: string }> {
+  const embedded = inlineImageData(src);
+  if (embedded) {
+    if (embedded.base64.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4) {
+      throw new Error("Attachment exceeds the 10 MiB download limit.");
+    }
+    const data = Buffer.from(embedded.base64, "base64");
+    if (data.length > MAX_ATTACHMENT_BYTES) throw new Error("Attachment exceeds the 10 MiB download limit.");
+    return { data, contentType: embedded.contentType };
+  }
+  const url = new URL(src);
+  if (!isInlineImageUrlAllowed(config, url)) {
+    throw new Error("Inline image downloads require HTTPS on this Freshservice origin or a supported asset host. Other sources remain available as metadata.");
+  }
+  return downloadFile(config, url, "Freshservice inline image", true);
+}
+
+async function downloadFile(
+  config: FreshserviceConfig,
+  endpoint: URL,
+  label: string,
+  inline = false
+): Promise<{ data: Buffer; contentType: string }> {
   let url = endpoint;
-  let authorization: string | undefined = basicAuth(config.apiKey);
+  let authorization: string | undefined = endpoint.origin === new URL(`https://${config.domain}`).origin
+    ? basicAuth(config.apiKey) : undefined;
   const signal = AbortSignal.timeout(30_000);
 
   for (let redirects = 0; ; redirects++) {
@@ -559,6 +600,9 @@ export async function downloadAttachment(
       if (next.protocol !== "https:" || next.username || next.password) {
         throw new Error("Attachment download redirects must use HTTPS without URL credentials.");
       }
+      if (inline && !isInlineImageUrlAllowed(config, next)) {
+        throw new Error("Inline image redirect is not on a supported asset host.");
+      }
       // Freshservice may redirect to signed CDN URLs. Once we leave the API
       // origin, never forward or reintroduce the agent's API key.
       if (next.origin !== endpoint.origin) authorization = undefined;
@@ -568,7 +612,7 @@ export async function downloadAttachment(
 
     if (!res.ok) {
       await res.body?.cancel();
-      throw new Error(`Freshservice attachment ${attachmentId} download failed: HTTP ${res.status}`);
+      throw new Error(`${label} download failed: HTTP ${res.status}`);
     }
     if (Number(res.headers.get("content-length")) > MAX_ATTACHMENT_BYTES) {
       await res.body?.cancel();

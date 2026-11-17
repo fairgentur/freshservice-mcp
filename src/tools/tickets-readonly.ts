@@ -17,6 +17,7 @@ import {
   PRIORITY_MAP,
 } from "../freshservice-client.js";
 import { nonEmptyCustomFields } from "./ticket-fields.js";
+import { inlineImages } from "../inline-images.js";
 
 function statusLabel(status: number): string {
   return DEFAULT_STATUS_MAP[status] ?? String(status);
@@ -91,7 +92,8 @@ export function registerReadOnlyTicketTools(
       title: "Get Ticket",
       description:
         "Retrieve full details of a single Freshservice ticket by ID, including description, " +
-        "category, sub_category, item_category, group_id and attachment metadata. " +
+        "category, sub_category, item_category, group_id, attachment metadata and inline_images from the HTML. " +
+        "Use download_inline_image with ticket_id and image_index to retrieve an inline image. " +
         "Use list_ticket_attachments for all files, including conversations and service-request forms.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive(),
@@ -101,8 +103,8 @@ export function registerReadOnlyTicketTools(
     async ({ ticket_id, include }) => {
       const ticket = await getTicket(config, ticket_id, include ?? "requester,stats,ticket_attachments");
       const description =
-        ticket.description_text?.trim() ?? stripHtml(ticket.description ?? "");
-      const result = { ...normalizeTicket(ticket), description, attachments: ticket.attachments ?? [] };
+        ticket.description_text?.trim() || stripHtml(ticket.description ?? "");
+      const result = { ...normalizeTicket(ticket), description, attachments: ticket.attachments ?? [], inline_images: inlineImages(ticket.description, config) };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
@@ -113,7 +115,10 @@ export function registerReadOnlyTicketTools(
     "get_ticket_comments",
     {
       title: "Get Ticket Comments",
-      description: "Retrieve all conversations (replies and notes), including attachment metadata, for a Freshservice ticket.",
+      description:
+        "Retrieve all conversations (replies and notes), including attachment metadata and inline_images " +
+        "extracted from each original HTML body even when body_text is present or attachments is empty. " +
+        "Use download_inline_image with ticket_id, conversation_id and image_index to retrieve the image contents.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive(),
       }),
@@ -129,8 +134,9 @@ export function registerReadOnlyTicketTools(
         from_email: c.from_email ?? null,
         user_id: c.user_id ?? null,
         created_at: c.created_at,
-        body: c.body_text?.trim() ?? stripHtml(c.body ?? ""),
+        body: c.body_text?.trim() || stripHtml(c.body ?? ""),
         attachments: c.attachments ?? [],
+        inline_images: inlineImages(c.body, config),
       }));
       return {
         content: [
