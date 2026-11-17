@@ -20,6 +20,7 @@ import {
   PRIORITY_MAP,
 } from "../freshservice-client.js";
 import { customFieldsSchema, nonEmptyCustomFields } from "./ticket-fields.js";
+import { inlineImages } from "../inline-images.js";
 
 /**
  * Shared wording for every rich-text field. Freshservice stores the value verbatim,
@@ -145,7 +146,8 @@ export function registerTicketTools(
       description:
         "Retrieve full details of a single Freshservice ticket by ID, " +
         "including description, category, sub_category, item_category, group_id, status, " +
-        "priority, requester, stats and attachment metadata. " +
+        "priority, requester, stats, attachment metadata and inline_images from the original HTML. " +
+        "Use download_inline_image with ticket_id and image_index to retrieve an inline image. " +
         "Use list_ticket_attachments for all files, including conversations and service-request forms.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
@@ -161,12 +163,13 @@ export function registerTicketTools(
     async ({ ticket_id, include }) => {
       const ticket = await getTicket(config, ticket_id, include ?? "requester,stats,ticket_attachments");
       const description =
-        ticket.description_text?.trim() ??
+        ticket.description_text?.trim() ||
         stripHtml(ticket.description ?? "");
       const result = {
         ...normalizeTicket(ticket, DEFAULT_STATUS_MAP, config.domain),
         description,
         attachments: ticket.attachments ?? [],
+        inline_images: inlineImages(ticket.description, config),
       };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -182,7 +185,9 @@ export function registerTicketTools(
     {
       title: "Get Ticket Comments",
       description:
-        "Retrieve all conversations (replies and notes), including attachment metadata, for a Freshservice ticket.",
+        "Retrieve all conversations (replies and notes), including attachment metadata and inline_images " +
+        "extracted from each original HTML body even when body_text is present or attachments is empty. " +
+        "Use download_inline_image with ticket_id, conversation_id and image_index to retrieve the image contents.",
       inputSchema: z.object({
         ticket_id: z.number().int().positive().describe("Freshservice ticket ID"),
       }),
@@ -198,8 +203,9 @@ export function registerTicketTools(
         from_email: c.from_email ?? null,
         user_id: c.user_id ?? null,
         created_at: c.created_at,
-        body: c.body_text?.trim() ?? stripHtml(c.body ?? ""),
+        body: c.body_text?.trim() || stripHtml(c.body ?? ""),
         attachments: c.attachments ?? [],
+        inline_images: inlineImages(c.body, config),
       }));
       return {
         content: [

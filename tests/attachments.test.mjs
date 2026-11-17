@@ -344,7 +344,7 @@ for (const readonly of [false, true]) {
     t.after(() => client.close());
     await client.connect(transport);
     const { tools } = await client.listTools();
-    for (const name of ["list_ticket_attachments", "download_attachment"]) {
+    for (const name of ["list_ticket_attachments", "download_attachment", "download_inline_image"]) {
       assert.equal(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint, true);
     }
     assert.equal(tools.some((tool) => tool.name === "create_ticket"), !readonly);

@@ -12,7 +12,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for [Fr
 - 📋 **List tickets** — powerful filter queries or built-in presets
 - 🔍 **Get ticket details** — full description, stats, and metadata
 - 💬 **Read conversations** — all replies and internal notes
-- 📎 **Retrieve attachments** — list ticket, conversation and service-request form files, download their contents
+- 📎 **Retrieve attachments and inline images** — list ticket, conversation and service-request form files, discover pasted screenshots and download their contents
 - ✏️ **Create tickets** — with full field support
 - 🛒 **Service catalog requests** — discover catalog items and forms, then request through their workflow and routing
 - 🔄 **Update tickets** — status, priority, assignment, tags
@@ -84,8 +84,9 @@ Set `FRESHSERVICE_READONLY` to `"true"` to prevent any modifications. In this mo
 | `list_tickets` | List tickets with filter query or built-in preset |
 | `get_ticket` | Get full details of a single ticket |
 | `get_ticket_comments` | Get all conversations for a ticket |
-| `list_ticket_attachments` | List files from a ticket, all its conversations and service-request forms, with source context |
+| `list_ticket_attachments` | List files and inline images from a ticket and all its conversations, plus service-request form files, with source context |
 | `download_attachment` | Download file contents by attachment ID (up to 10 MiB) |
+| `download_inline_image` | Retrieve an inline image by ticket/comment and image index (up to 10 MiB) |
 | `create_ticket` | Create a new ticket |
 | `update_ticket` | Update ticket fields |
 | `add_ticket_note` | Add a private note or public reply |
@@ -324,6 +325,8 @@ in read-only mode; placing requests and updating tickets are not.
 
 `get_ticket` returns ticket attachment metadata under `attachments` (included by default).
 `get_ticket_comments` returns attachment metadata on each conversation and follows all pages.
+Both also return `inline_images` extracted from the original HTML description or comment,
+even when Freshservice supplies a plain-text body or an empty `attachments` array.
 For a combined list, call `list_ticket_attachments` with `ticket_id`. Each entry contains the
 metadata supplied by Freshservice (ID, name, content type, size, attachment URL and dates),
 plus `source` (`ticket`, `conversation` or `requested_item`), `conversation_id` and `private`
@@ -335,8 +338,12 @@ Files repeated in an item's main array and attachment field are listed once. Inc
 call the service-request endpoint. A failure to read requested items is reported as an error,
 so an incomplete list cannot be mistaken for an empty one.
 
-An empty `get_ticket.attachments` array does not rule out files on a service-request form;
-use `list_ticket_attachments` for the complete list. Inline HTML images are not extracted.
+An empty `get_ticket.attachments` array does not rule out files on a service-request form or
+inline screenshots. Use `list_ticket_attachments` for the combined list. Inline entries have
+`inline: true`, a 1-based `image_index`, and `conversation_id`/`private` source context.
+Their size and content type are omitted when not supplied by the source. The count includes
+inline entries; an image also listed as a regular attachment with the same URL appears once
+within that description or comment.
 All attachment tools work in read-only mode.
 
 ```
@@ -359,6 +366,39 @@ Downloads have a 30-second timeout and a 10 MiB limit, enforced while reading th
 even without a Content-Length header. Larger files can be downloaded directly using the
 listed URL. HTTPS redirects to signed CDN URLs are supported without forwarding the API key
 outside the Freshservice origin. The server does not write files to disk.
+
+### Inline images and pasted screenshots
+
+Images pasted directly into descriptions and comments are often stored as HTML `<img>`
+elements, with no regular attachment record. The plain-text `description` and `body` remain
+available, and `inline_images` preserves the image references separately. Each image has an
+`image_index` starting at 1 within that description/comment, an optional `alt`, a resolved
+`url` where available, and `downloadable` to indicate a supported source. HTML entities in
+attributes are decoded, relative URLs are resolved against `yourcompany.freshservice.com`,
+and repeated sources in the same body are listed once. Attachment IDs are never guessed
+from numeric fragments of an image URL.
+
+To view an image, use `download_inline_image` with the ticket ID and `image_index` from the
+latest read. For a comment image, also include the returned conversation ID:
+
+```json
+{ "ticket_id": 12345, "conversation_id": 23456, "image_index": 1 }
+```
+
+Omit `conversation_id` for a description image. The tool re-reads that ticket or comment
+with the API agent's permissions and retrieves the selected source on demand. Discovery
+tools do not automatically download images. PNG/JPEG/GIF/WebP are returned as MCP image
+content; other image formats are returned as base64 resources, depending on client support.
+The existing 30-second network timeout and 10 MiB size limit also apply here.
+
+HTTPS images on the configured Freshservice origin, Freshworks asset domains, CloudFront
+and S3 are supported. The API key is sent only to the configured origin and is never
+forwarded or reintroduced after leaving it. Unsupported hosts, HTTP URLs, `cid:` and
+`blob:` references remain visible with `downloadable: false`; they are not fetched.
+Embedded PNG/JPEG/GIF/WebP base64 data is supported, but omitted from text output to keep
+the response compact (`embedded: true`); the download tool reads it from the original HTML.
+CSS background images and `srcset`-only images are not extracted. If the body changes,
+refresh the ticket/comments before selecting its current image index.
 
 ## Change Management
 

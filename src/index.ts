@@ -53,7 +53,7 @@ async function main() {
 
   const server = new McpServer({
     name: "freshservice-mcp",
-    version: "0.6.1",
+    version: "0.6.2",
   }, { maxToolInputElements: 10_000 });
 
   // Always register read tools
